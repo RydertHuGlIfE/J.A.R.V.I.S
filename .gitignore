@@ -1,0 +1,37 @@
+# Python Virtual Environments
+venv/
+pyenv/
+env/
+.venv/
+ENV/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment variables & secrets
+.env
+
+# Editor / IDE configurations
+.lapce/
+.ropeproject/
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# Executables & Web Drivers
+geckodriver.exe
+
+# Database and logs
+*.db
+history.json
+*.log
+
+# OS-specific files
+.DS_Store
+Thumbs.db
