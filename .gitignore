@@ -32,6 +32,8 @@ geckodriver.exe
 history.json
 *.log
 
-# OS-specific files
 .DS_Store
 Thumbs.db
+
+# Piper TTS Models
+models/
