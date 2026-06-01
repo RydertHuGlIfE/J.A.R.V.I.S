@@ -216,10 +216,44 @@ def rgn():
         entry.insert(0, last_query)
         on_submit()
 
+# Global flags and lock to prevent microphone contention and overlapping speech
+is_speaking = False
+speech_lock = threading.Lock()
+
+# Initialize Piper voice model globally to avoid loading delay on each speak call
+piper_voice = None
+def init_piper():
+    global piper_voice
+    try:
+        import urllib.request
+        from piper import PiperVoice
+        
+        model_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
+        model_path = os.path.join(model_dir, "en_US-ryan-medium.onnx")
+        config_path = os.path.join(model_dir, "en_US-ryan-medium.onnx.json")
+        
+        if not os.path.exists(model_path) or not os.path.exists(config_path):
+            os.makedirs(model_dir, exist_ok=True)
+            base_url = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/ryan/medium"
+            print("Downloading Piper voice model (en_US-ryan-medium)... Please wait...")
+            if not os.path.exists(model_path):
+                urllib.request.urlretrieve(f"{base_url}/en_US-ryan-medium.onnx", model_path)
+            if not os.path.exists(config_path):
+                urllib.request.urlretrieve(f"{base_url}/en_US-ryan-medium.onnx.json", config_path)
+            print("Piper voice model downloaded successfully.")
+            
+        piper_voice = PiperVoice.load(model_path)
+        print("Piper TTS loaded successfully.")
+    except Exception as e:
+        print(f"Failed to initialize Piper TTS: {e}")
+
+# Start initializing Piper in the background immediately
+threading.Thread(target=init_piper, daemon=True).start()
+
 def speak(text):
     import hashlib
+    import wave
     
-
     cache_dir = "/tmp/jarvis_voice_cache"
     try:
         os.makedirs(cache_dir, exist_ok=True)
@@ -239,73 +273,76 @@ def speak(text):
 
     def play_audio_file(file_path):
         try:
-            if os.path.exists("/usr/bin/mpv"):
-                subprocess.run(["/usr/bin/mpv", "--no-video", file_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            elif os.path.exists("/usr/bin/mpg123"):
-                subprocess.run(["/usr/bin/mpg123", file_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            elif os.path.exists("/usr/bin/pw-play"):
+            if os.path.exists("/usr/bin/pw-play"):
                 subprocess.run(["/usr/bin/pw-play", file_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             elif os.path.exists("/usr/bin/paplay"):
                 subprocess.run(["/usr/bin/paplay", file_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            elif os.path.exists("/usr/bin/mpv"):
+                subprocess.run(["/usr/bin/mpv", "--no-video", file_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            elif os.path.exists("/usr/bin/aplay"):
+                subprocess.run(["/usr/bin/aplay", "-q", file_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception as e:
             print(f"Playback error: {e}")
 
     def run_speech_pipeline():
-        import asyncio
-        import edge_tts
+        global piper_voice, is_speaking
         import re
+        import time
+        from piper import SynthesisConfig
         
-        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
-        if not sentences:
-            return
+        with speech_lock:
+            is_speaking = True
+            try:
+                sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
+                if not sentences:
+                    return
 
-        async def process_and_play():
-            tasks = []
-            cached_files = []
-            
-            for sentence in sentences:
-                sentence_hash = hashlib.md5(sentence.encode('utf-8')).hexdigest()
-                cached_file = os.path.join(cache_dir, f"{sentence_hash}.mp3")
-                cached_files.append((sentence, cached_file))
-                
-                if not os.path.exists(cached_file):
-                    async def synthesize_one(s, path):
-                        try:
-                            communicate = edge_tts.Communicate(s, "en-GB-RyanNeural", rate="+25%")
-                            await communicate.save(path)
-                        except Exception as e:
-                            print(f"edge-tts failed for: '{s}' -> {e}")
+                if piper_voice is None:
+                    # Fallback to local offline engines or wait
+                    print("Piper voice not loaded yet, trying fallback...")
+                    for sentence in sentences:
+                        if tts_engine:
                             try:
-                                loop = asyncio.get_running_loop()
-                                def save_gtts():
-                                    tts = gTTS(text=s, lang='en')
-                                    tts.save(path)
-                                await loop.run_in_executor(None, save_gtts)
-                            except Exception as ge:
-                                print(f"gTTS fallback failed -> {ge}")
-                                
-                    tasks.append(synthesize_one(sentence, cached_file))
-            
-            if tasks:
-                await asyncio.gather(*tasks)
-                
-            for sentence, cached_file in cached_files:
-                if os.path.exists(cached_file):
-                    play_audio_file(cached_file)
-                else:
-                    if tts_engine:
+                                tts_engine.say(sentence)
+                                tts_engine.runAndWait()
+                                continue
+                            except Exception:
+                                pass
                         try:
-                            tts_engine.say(sentence)
-                            tts_engine.runAndWait()
-                            continue
+                            subprocess.run(["spd-say", sentence], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                         except Exception:
                             pass
-                    try:
-                        subprocess.run(["spd-say", sentence], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    except Exception:
-                        pass
+                    return
 
-        asyncio.run(process_and_play())
+                for sentence in sentences:
+                    sentence_hash = hashlib.md5(sentence.encode('utf-8')).hexdigest()
+                    cached_file = os.path.join(cache_dir, f"{sentence_hash}.wav")
+                    
+                    if not os.path.exists(cached_file):
+                        try:
+                            # length_scale=0.85 speeds up the voice slightly (makes it ~18% faster)
+                            syn_config = SynthesisConfig(length_scale=0.85)
+                            with wave.open(cached_file, "wb") as wav_file:
+                                piper_voice.synthesize_wav(sentence, wav_file, syn_config=syn_config)
+                        except Exception as e:
+                            print(f"Piper synthesis failed for '{sentence}': {e}")
+                            if tts_engine:
+                                try:
+                                    tts_engine.say(sentence)
+                                    tts_engine.runAndWait()
+                                    continue
+                                except Exception:
+                                    pass
+                            try:
+                                subprocess.run(["spd-say", sentence], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            except Exception:
+                                pass
+                            continue
+                    
+                    if os.path.exists(cached_file):
+                        play_audio_file(cached_file)
+            finally:
+                is_speaking = False
 
     threading.Thread(target=run_speech_pipeline, daemon=True).start()
 
@@ -357,7 +394,11 @@ def animate_status_pulse(min_radius, max_radius, alpha_start):
     root.after(50, lambda: animate_status_pulse(min_radius, max_radius, alpha_start))
 
 def recognize_voice():
-    global is_bot_active
+    global is_bot_active, is_speaking
+
+    # Wait if the bot is currently speaking to avoid device lockups and cutoffs
+    while is_speaking:
+        time.sleep(0.1)
 
     try:
         with sr.Microphone(device_index=0) as source:

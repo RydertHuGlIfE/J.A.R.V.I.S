@@ -9,5 +9,5 @@ opencv-python~=4.10.0.84
 groq>=0.9.0
 python-dotenv
 gtts
-edge-tts
+piper-tts
 ddgs
