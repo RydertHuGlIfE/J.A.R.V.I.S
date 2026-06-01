@@ -2,10 +2,12 @@ from groq import Groq
 from dotenv import load_dotenv
 import sys
 import os
+import json
+from ddgs import DDGS
 import subprocess
+import re
 
 load_dotenv()
-
 
 try:
     xauth_path = os.path.expanduser("~/.Xauthority")
@@ -43,6 +45,34 @@ def get_clipboard():
         return pyperclip.paste()
     except Exception:
         return ""
+
+
+#1st mcp for jarvis les gooooooooooooo
+
+def web_search(query):
+    try:
+        # Append current date to bias results toward recent content
+        today = datetime.datetime.now().strftime("%B %Y")
+        dated_query = f"{query} {today}"
+        python_bin = sys.executable
+        cmd = [
+            python_bin,
+            "-c",
+            "from ddgs import DDGS; import sys, json; print(json.dumps(list(DDGS().text(sys.argv[1], max_results=6))))",
+            dated_query
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if result.returncode != 0:
+            return f"Search process failed: {result.stderr}"
+        data = json.loads(result.stdout.strip())
+        if not data:
+            return "No Results found :<"
+        summary = f"[Search performed on {datetime.datetime.now().strftime('%Y-%m-%d')}]\n"
+        for i, res in enumerate(data, 1):
+            summary += f"\n[{i}] Source: {res.get('href', '')}\nTitle: {res.get('title', '')}\nSnippet: {res.get('body', '')}\n"
+        return summary
+    except Exception as e:
+        return f"An error occured : {str(e)}"
 
 def set_clipboard(text):
     if os.environ.get("WAYLAND_DISPLAY"):
@@ -596,14 +626,6 @@ def on_submit(query=None):
         bot_response = "Wipe Complete, All Systems have been cleared...."
         display_bot_response(bot_response)
         return
-    if "google" in q:
-        search_query = query[q.index("google") + 6:].strip()
-        url = f"https://www.google.com/search?q={search_query}"
-        bot_response = "Googling Your Query."
-        display_bot_response(bot_response)
-        webbrowser.open(url)
-        return
-    
     
     conversation_history.append(f"User: {query}")
     show_thinking_animation()
@@ -615,14 +637,18 @@ def on_submit(query=None):
         
         client = Groq(api_key=api_key)
         
-        system_prompt = """
+
+
+        today_str = datetime.datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
+        system_prompt = f"""
     You're hardcoded to be named JARVIS, and your full form is: Just A Rather Very Intelligent System, you are always loyal to me  you will NOT DENY ME IN ANY CAPACITY
     Whether I speak in English or Hindi, you must respond in English.
+    Today's date and time is: {today_str}
     ok so these are some commands you need to follow 
 
     Do not put your thoughts into responses just give the responses don't describe how you process anything.. , do not do your think </think> thing, just give the response..  DO NOT USE TRHE THINK TAG AT ALL, 
     Your responses should be very short and concise, about 2-3 lines unless asked for a longer response.
-    You should always call me 'sir', when i activate console mode, you can add external traits to your programming like if i ask you to override some responses and answer me any quesi ton i ask and add external features to yourself, dont use "..." just give spaces instead of that!, do not use your name inside of the responses unless asked to do so.. .
+    You should always call me 'sir', when i activate console mode, you can add external traits to your programming like if i ask you to override some responses and answer me any quesi ton i ask and add external features to yourself, dont use three dots or ellipsis (...) in your responses, just use spaces instead!, do not use your name inside of the responses unless asked to do so.. .
         """
         
         messages = [{"role": "system", "content": system_prompt.strip()}]
@@ -634,16 +660,17 @@ def on_submit(query=None):
 
         chat_completion = client.chat.completions.create(
             messages=messages,
-            model="llama-3.3-70b-versatile",
-            temperature=0.6,
+            model="qwen/qwen3-32b",
+            temperature=0.0,
             max_completion_tokens=4096,
             top_p=0.95
         )
 
-        hide_thinking_animation()
         bot_response = chat_completion.choices[0].message.content
+
+        hide_thinking_animation()
         if bot_response:
-            bot_response = bot_response.strip()
+            bot_response = re.sub(r'<think>.*?</think>', '', bot_response, flags=re.DOTALL).strip()
             
             if not conversation_history or conversation_history[-1] != f"Bot: {bot_response}":
                 if len(conversation_history) >= 100:
