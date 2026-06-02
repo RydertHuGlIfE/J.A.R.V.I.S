@@ -11,6 +11,8 @@ import pyttsx3
 import threading
 from PIL import ImageGrab
 import time
+from ddgs import DDGS
+
 
 
 conversation_history = []
@@ -48,6 +50,15 @@ def update_status_indicator():
         status_label.config(text="Status: Active", fg="green")
     else:
         status_label.config(text="Status: Standby", fg="red")
+
+
+#1st mcp server trial
+def search_google_duckduckgo(query):
+    with DDGS() as ddgs:
+        results=ddgs.text(query)
+        for r in results:
+            print(r)
+
 
 def recognize_voice():
     global is_bot_active
