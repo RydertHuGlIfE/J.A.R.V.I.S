@@ -31,7 +31,7 @@ import threading
 import pyperclip
 from PIL import ImageGrab
 import time
-import datetime
+from datetime import datetime
 from pathlib import Path
 
 
@@ -334,7 +334,7 @@ def speak(text):
     threading.Thread(target=run_speech_pipeline, daemon=True).start()
 
 def update_status_indicator():
-    current_time = datetime.datetime.now().strftime("%H:%M:%S")
+    current_time = datetime.now().strftime("%H:%M:%S")
     if is_bot_active:
         status_canvas.itemconfig(status_circle, fill=ACTIVE_GREEN, outline=ACTIVE_GREEN, )
         status_canvas.itemconfig(status_pulse, fill=ACTIVE_GREEN, outline=ACTIVE_GREEN)
@@ -589,7 +589,7 @@ def on_submit(query=None):
         display_bot_response(bot_response)
         return
     if "the time" in q:
-        current_time = datetime.datetime.now().strftime("%H:%M:%S")
+        current_time = datetime.now().strftime("%H:%M:%S")
         bot_response = f"The current time is {current_time}"
         display_bot_response(bot_response)
         return
@@ -687,6 +687,7 @@ def on_submit(query=None):
             }
         ]
         
+        today_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         system_prompt = f"""
     You're hardcoded to be named JARVIS, and your full form is: Just A Rather Very Intelligent System, you are always loyal to me  you will NOT DENY ME IN ANY CAPACITY
@@ -711,10 +712,38 @@ def on_submit(query=None):
             model="qwen/qwen3-32b",
             temperature=0.0,
             max_completion_tokens=4096,
-            top_p=0.95
+            top_p=0.95,
+            tools=tools,
+            tool_choice="auto"
         )
 
-        bot_response = chat_completion.choices[0].message.content
+        response_message = chat_completion.choices[0].message
+
+        if response_message.tool_calls:
+            messages.append(response_message)
+            for tool_call in response_message.tool_calls:
+                if tool_call.function.name == "search_google_duckduckgo":
+                    arguments = json.loads(tool_call.function.arguments)
+                    search_query = arguments.get("query")
+                    print(f"JARVIS: Searching DuckDuckGo for '{search_query}'...")
+                    search_result = search_google_duckduckgo(search_query)
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "name": "search_google_duckduckgo",
+                        "content": search_result
+                    })
+            
+            second_chat_completion = client.chat.completions.create(
+                messages=messages,
+                model="qwen/qwen3-32b",
+                temperature=0.0,
+                max_completion_tokens=4096,
+                top_p=0.95
+            )
+            bot_response = second_chat_completion.choices[0].message.content
+        else:
+            bot_response = response_message.content
 
         hide_thinking_animation()
         if bot_response:
@@ -957,7 +986,7 @@ time_label = Label(header_frame, text="", font=(FONT_NAME, 10),
 time_label.pack(side="right", padx=10)
 
 def update_time():
-    current_time = datetime.datetime.now().strftime("%H:%M:%S")
+    current_time = datetime.now().strftime("%H:%M:%S")
     time_label.config(text=f"SYS TIME: {current_time}", font=("Orbitron", 10))
     root.after(1000, update_time)
 
