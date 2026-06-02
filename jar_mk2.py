@@ -52,11 +52,14 @@ def get_clipboard():
 def search_google_duckduckgo(query):
     try:
         with DDGS() as ddgs:
-            output=[]
-            results=ddgs.text(query)
-            for r in results:
-                output.append(r)
-                print(r)
+            output = []
+            results = list(ddgs.text(query))
+            for r in results[:3]:
+                output.append({
+                    "title": r.get("title", ""),
+                    "href": r.get("href", ""),
+                    "body": r.get("body", "")[:200]
+                })
             return json.dumps(output)
     except Exception as e:
         return f"An error occured : {str(e)}"
@@ -720,6 +723,7 @@ def on_submit(query=None):
         response_message = chat_completion.choices[0].message
 
         if response_message.tool_calls:
+            speak("Checking info, please wait...")
             messages.append(response_message)
             for tool_call in response_message.tool_calls:
                 if tool_call.function.name == "search_google_duckduckgo":
