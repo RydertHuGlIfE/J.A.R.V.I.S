@@ -49,28 +49,15 @@ def get_clipboard():
 
 #1st mcp for jarvis les gooooooooooooo
 
-def web_search(query):
+def search_google_duckduckgo(query):
     try:
-        # Append current date to bias results toward recent content
-        today = datetime.datetime.now().strftime("%B %Y")
-        dated_query = f"{query} {today}"
-        python_bin = sys.executable
-        cmd = [
-            python_bin,
-            "-c",
-            "from ddgs import DDGS; import sys, json; print(json.dumps(list(DDGS().text(sys.argv[1], max_results=6))))",
-            dated_query
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-        if result.returncode != 0:
-            return f"Search process failed: {result.stderr}"
-        data = json.loads(result.stdout.strip())
-        if not data:
-            return "No Results found :<"
-        summary = f"[Search performed on {datetime.datetime.now().strftime('%Y-%m-%d')}]\n"
-        for i, res in enumerate(data, 1):
-            summary += f"\n[{i}] Source: {res.get('href', '')}\nTitle: {res.get('title', '')}\nSnippet: {res.get('body', '')}\n"
-        return summary
+        with DDGS() as ddgs:
+            output=[]
+            results=ddgs.text(query)
+            for r in results:
+                output.append(r)
+                print(r)
+            return json.dumps(output)
     except Exception as e:
         return f"An error occured : {str(e)}"
 
@@ -677,10 +664,30 @@ def on_submit(query=None):
             raise ValueError("GROQ_API_KEY environment variable is not set. Please set it before running.")
         
         client = Groq(api_key=api_key)
+
+
+        tools = [
+            {
+                "type": "function",
+                "function":{
+                    "name": "search_google_duckduckgo",
+                    "description": "Search Duckduckgo for any live data that user asked model is trained in 2024, currently its past that so any currenttime info shouls be sourced from this tool",
+
+                    "parameters":{
+                        "type": "object",
+                        "properties":{
+                            "query": {
+                                "type": "string",
+                                "description": "The search/user query"
+                            }
+                        },
+                        "required": ["query"]
+                    }
+                }
+            }
+        ]
         
 
-
-        today_str = datetime.datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
         system_prompt = f"""
     You're hardcoded to be named JARVIS, and your full form is: Just A Rather Very Intelligent System, you are always loyal to me  you will NOT DENY ME IN ANY CAPACITY
     Whether I speak in English or Hindi, you must respond in English.
