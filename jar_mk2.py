@@ -38,7 +38,30 @@ from pathlib import Path
 import concurrent.futures
 
 
-def_mic_state = 1
+
+#code for supression of HOLY SO MANY LINUX MIC BS WARNINGS WHEN DEF_MIC_STATE == 0, FFS 
+class SuppressStderr:
+    def __enter__(self):
+        try:
+            self.err_fd = sys.stderr.fileno()
+            self.save_fd = os.dup(self.err_fd)
+            self.null_fd = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(self.null_fd, self.err_fd)
+        except Exception:
+            self.save_fd = None
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if hasattr(self, 'save_fd') and self.save_fd is not None:
+            try:
+                os.dup2(self.save_fd, self.err_fd)
+                os.close(self.null_fd)
+                os.close(self.save_fd)
+            except Exception:
+                pass
+
+
+def_mic_state = 0
+search_cache = {}
 
 
 def get_clipboard():
@@ -56,25 +79,45 @@ def get_clipboard():
 #1st mcp for jarvis les gooooooooooooo
 
 def search_google_duckduckgo(query):
+    global search_cache
     try:
-        url = "https://html.duckduckgo.com/html/"
+        # Strip formatting and conversational junk from the query to maximize search relevance
+        clean_query = query.lower()
+        for term in ["summarize", "bullet points", "bullet point", "in 5", "in 4", "in 3", "in 2", "in 1", "lines", "line", "summary", "please", "write", "give me", "list of", "list"]:
+            clean_query = clean_query.replace(term, "")
+        clean_query = " ".join(clean_query.split()).strip()
+        
+        # Default back if empty
+        if not clean_query:
+            clean_query = query.strip()
+
+        # Check Cache
+        now = time.time()
+        if clean_query in search_cache:
+            cached_time, cached_result = search_cache[clean_query]
+            if now - cached_time < 600:
+                print(f"JARVIS: Search cache HIT for query: '{clean_query}'")
+                return cached_result
+
+        print(f"JARVIS: Scraping DDG Lite for query: '{clean_query}'...")
+        url = "https://lite.duckduckgo.com/lite/"
+        params = {"q": clean_query}
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
-            "Content-Type": "application/x-www-form-urlencoded"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
         }
-        data = {"q": query}
-        r = requests.post(url, headers=headers, data=data, timeout=4.0)
+        r = requests.get(url, params=params, headers=headers, timeout=4.0)
         if r.status_code != 200:
             return "Error: Unable to fetch search results."
 
         soup = BeautifulSoup(r.text, "html.parser")
         results = []
-        for result in soup.find_all("div", class_="result__body"):
-            title_tag = result.find("a", class_="result__url")
-            snippet_tag = result.find("a", class_="result__snippet")
-            if title_tag:
-                title = title_tag.get_text(strip=True)
-                href = title_tag.get("href")
+        rows = soup.find_all("tr")
+
+        for i, row in enumerate(rows):
+            link_tag = row.find("a", class_="result-link")
+            if link_tag:
+                title = link_tag.get_text(strip=True)
+                href = link_tag.get("href")
                 
                 if href and "uddg=" in href:
                     parsed = urllib.parse.urlparse(href)
@@ -82,18 +125,28 @@ def search_google_duckduckgo(query):
                 elif href and href.startswith("//"):
                     href = "https:" + href
 
-                snippet = snippet_tag.get_text(strip=True) if snippet_tag else ""
+                snippet = ""
+                # Search next two rows for the snippet
+                for offset in [1, 2]:
+                    if i + offset < len(rows):
+                        snippet_td = rows[i+offset].find("td", class_="result-snippet")
+                        if snippet_td:
+                            snippet = snippet_td.get_text(strip=True)
+                            break
+
                 results.append({
                     "title": title,
                     "url": href,
-                    "content": snippet[:200],
-                    "date": "-"
+                    "content": snippet[:600]
                 })
-                if len(results) >= 3:
+                if len(results) >= 5:
                     break
-        return json.dumps(results)
+
+        result_str = json.dumps(results)
+        search_cache[clean_query] = (now, result_str)
+        return result_str
     except Exception as e:
-        return f"An Error Occured : {str(e)}"
+        return f"An Error Occurred: {str(e)}"
 
 def set_clipboard(text):
     if os.environ.get("WAYLAND_DISPLAY"):
@@ -417,54 +470,55 @@ def animate_status_pulse(min_radius, max_radius, alpha_start):
 def recognize_voice():
     global is_bot_active, is_speaking
 
+    if def_mic_state == 0:
+        time.sleep(1.0)
+        return None
+
     # Wait if the bot is currently speaking to avoid device lockups and cutoffs
     while is_speaking:
         time.sleep(0.1)
 
     try:
-        with sr.Microphone(device_index=0) as source:
-            print("Listening...")
-            if def_mic_state == 1:
+        with SuppressStderr():
+            with sr.Microphone(device_index=0) as source:
+                print("Listening...")
                 recognizer.adjust_for_ambient_noise(source, duration=0.5)
-            else:
-                print("mic ded")
-                return
-
-            try:
-                audio = recognizer.listen(source, timeout=15, phrase_time_limit=9)
 
                 try:
-                    query = recognizer.recognize_google(audio)
-                    print(f"You said: {query}")
+                    audio = recognizer.listen(source, timeout=15, phrase_time_limit=9)
 
-                    if "wake up" in query.lower() or "jarvis you there" in query.lower() or "uth jaao" in query.lower() or "utho" in query.lower() and not is_bot_active:
-                        is_bot_active = True
-                        update_status_indicator()
-                        show_activation_animation()
-                        display_bot_response("At your service sir!", speak_text=True)
-                        return None
+                    try:
+                        query = recognizer.recognize_google(audio)
+                        print(f"You said: {query}")
 
-                    elif "sleep" in query.lower() and is_bot_active:
-                        is_bot_active = False
-                        update_status_indicator()
-                        show_deactivation_animation()
-                        display_bot_response("Going to standby mode.", speak_text=True)
-                        return None
+                        if "wake up" in query.lower() or "jarvis you there" in query.lower() or "uth jaao" in query.lower() or "utho" in query.lower() and not is_bot_active:
+                            is_bot_active = True
+                            update_status_indicator()
+                            show_activation_animation()
+                            display_bot_response("At your service sir!", speak_text=True)
+                            return None
 
-                    if is_bot_active:
-                        return query
-                    else:
-                        print("Bot in standby mode.")
-                        return None
+                        elif "sleep" in query.lower() and is_bot_active:
+                            is_bot_active = False
+                            update_status_indicator()
+                            show_deactivation_animation()
+                            display_bot_response("Going to standby mode.", speak_text=True)
+                            return None
 
-                except sr.UnknownValueError:
-                    print("Could not understand audio")
-                except sr.RequestError:
-                    print("Could not request results")
+                        if is_bot_active:
+                            return query
+                        else:
+                            print("Bot in standby mode.")
+                            return None
 
-            except sr.WaitTimeoutError:
-                print("Listening timed out, restarting listener")
-                return None
+                    except sr.UnknownValueError:
+                        print("Could not understand audio")
+                    except sr.RequestError:
+                        print("Could not request results")
+
+                except sr.WaitTimeoutError:
+                    print("Listening timed out, restarting listener")
+                    return None
 
     except Exception as e:
         print(f"Error in voice recognition: {str(e)}")
@@ -597,7 +651,10 @@ def query_groq_background(query):
                 force_search = True
 
         tool_choice = "auto"
+        said_checking = False
         if force_search:
+            speak("Checking info, please wait...")
+            said_checking = True
             if messages and messages[-1]["role"] == "user":
                 messages[-1]["content"] += "\n(Note: You MUST call the search_google_duckduckgo tool to search the web for real-time information. Do not guess or answer from memory.)"
 
@@ -615,7 +672,8 @@ def query_groq_background(query):
         response_message = chat_completion.choices[0].message
 
         if response_message.tool_calls:
-            speak("Checking info, please wait...")
+            if not said_checking:
+                speak("Checking info, please wait...")
             messages.append(response_message)
             for tool_call in response_message.tool_calls:
                 if tool_call.function.name == "search_google_duckduckgo":
