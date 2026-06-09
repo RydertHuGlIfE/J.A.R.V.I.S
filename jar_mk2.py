@@ -3,7 +3,9 @@ from dotenv import load_dotenv
 import sys
 import os
 import json
-from ddgs import DDGS
+import requests
+from bs4 import BeautifulSoup
+import urllib.parse
 import subprocess
 import re
 
@@ -52,51 +54,41 @@ def get_clipboard():
 
 def search_google_duckduckgo(query):
     try:
-        output = []
-        
-        def fetch_news():
-            try:
-                with DDGS() as ddgs:
-                    return list(ddgs.news(query, max_results=3))
-            except Exception:
-                return []
+        url = "https://html.duckduckgo.com/html/"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
+        data = {"q": query}
+        r = requests.post(url, headers=headers, data=data, timeout=4.0)
+        if r.status_code != 200:
+            return "Error: Unable to fetch search results."
+
+        soup = BeautifulSoup(r.text, "html.parser")
+        results = []
+        for result in soup.find_all("div", class_="result__body"):
+            title_tag = result.find("a", class_="result__url")
+            snippet_tag = result.find("a", class_="result__snippet")
+            if title_tag:
+                title = title_tag.get_text(strip=True)
+                href = title_tag.get("href")
                 
-        def fetch_text():
-            try:
-                with DDGS() as ddgs:
-                    return list(ddgs.text(query, max_results=3))
-            except Exception:
-                return []
+                if href and "uddg=" in href:
+                    parsed = urllib.parse.urlparse(href)
+                    href = urllib.parse.parse_qs(parsed.query).get("uddg", [href])[0]
+                elif href and href.startswith("//"):
+                    href = "https:" + href
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            future_news = executor.submit(fetch_news)
-            future_text = executor.submit(fetch_text)
-            
-            news_res = future_news.result()
-            t_res = future_text.result()
-
-        for i in news_res:
-            output.append({
-                "title": i.get("title", "-"),
-                "url": i.get("url", "-"),
-                "content": i.get("body", "-")[:200],
-                "date": i.get("date", "-"),
-            })
-            
-        if len(output) < 3:
-            for i in t_res:
-                url = i.get("href", "-")
-                if not any(item["url"] == url for item in output):
-                    output.append({
-                        "title": i.get("title", "-"),
-                        "url": url,
-                        "content": i.get("body", "-")[:200],
-                        "date": i.get("date", "-"),
-                    })
-                    if len(output) >= 3:
-                        break
-                        
-        return json.dumps(output[:3])
+                snippet = snippet_tag.get_text(strip=True) if snippet_tag else ""
+                results.append({
+                    "title": title,
+                    "url": href,
+                    "content": snippet[:200],
+                    "date": "-"
+                })
+                if len(results) >= 3:
+                    break
+        return json.dumps(results)
     except Exception as e:
         return f"An Error Occured : {str(e)}"
 
@@ -581,6 +573,27 @@ def query_groq_background(query):
             elif msg.startswith("Bot: "):
                 messages.append({"role": "assistant", "content": msg[5:]})
 
+        # Search enforcement heuristics
+        keywords = ["who", "what", "where", "when", "why", "which", "score", "winner", "result", 
+                    "standing", "match", "game", "gp", "prix", "playoff", "tournament", "date", 
+                    "weather", "news", "current", "latest", "time", "happen", "yesterday", 
+                    "today", "tomorrow", "this year", "2025", "2026", "podium", "position", 
+                    "rank", "info", "about", "details", "tour", "ticket", "event", "schedule", 
+                    "live", "scorecard"]
+        
+        force_search = any(kw in query.lower() for kw in keywords)
+        
+        # Follow-up detection: short queries when history exists
+        if len(query.split()) < 8 and conversation_history:
+            greetings = ["hi", "hello", "hey", "thanks", "thank you", "bye", "goodbye", "ok", "okay", "yes", "no", "sure", "clear", "wipe", "help"]
+            if query.lower().strip() not in greetings:
+                force_search = True
+
+        tool_choice = "auto"
+        if force_search:
+            if messages and messages[-1]["role"] == "user":
+                messages[-1]["content"] += "\n(Note: You MUST call the search_google_duckduckgo tool to search the web for real-time information. Do not guess or answer from memory.)"
+
         chat_completion = client.chat.completions.create(
             messages=messages,
             model="qwen/qwen3-32b",
@@ -588,7 +601,8 @@ def query_groq_background(query):
             max_completion_tokens=4096,
             top_p=0.95,
             tools=tools,
-            tool_choice="auto"
+            tool_choice=tool_choice,
+            timeout=10.0
         )
 
         response_message = chat_completion.choices[0].message
@@ -614,7 +628,8 @@ def query_groq_background(query):
                 model="qwen/qwen3-32b",
                 temperature=0.0,
                 max_completion_tokens=4096,
-                top_p=0.95
+                top_p=0.95,
+                timeout=10.0
             )
             bot_response = second_chat_completion.choices[0].message.content
         else:
