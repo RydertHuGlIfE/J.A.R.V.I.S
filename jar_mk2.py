@@ -33,6 +33,7 @@ from PIL import ImageGrab
 import time
 from datetime import datetime
 from pathlib import Path
+import concurrent.futures
 
 
 def get_clipboard():
@@ -51,35 +52,51 @@ def get_clipboard():
 
 def search_google_duckduckgo(query):
     try:
-        with DDGS() as ddgs:
-            output = []
+        output = []
+        
+        def fetch_news():
             try:
-                new_res = list(ddgs.news(query, max_results=3))
-                for i in new_res:
+                with DDGS() as ddgs:
+                    return list(ddgs.news(query, max_results=3))
+            except Exception:
+                return []
+                
+        def fetch_text():
+            try:
+                with DDGS() as ddgs:
+                    return list(ddgs.text(query, max_results=3))
+            except Exception:
+                return []
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            future_news = executor.submit(fetch_news)
+            future_text = executor.submit(fetch_text)
+            
+            news_res = future_news.result()
+            t_res = future_text.result()
+
+        for i in news_res:
+            output.append({
+                "title": i.get("title", "-"),
+                "url": i.get("url", "-"),
+                "content": i.get("body", "-")[:200],
+                "date": i.get("date", "-"),
+            })
+            
+        if len(output) < 3:
+            for i in t_res:
+                url = i.get("href", "-")
+                if not any(item["url"] == url for item in output):
                     output.append({
                         "title": i.get("title", "-"),
-                        "url": i.get("url", "-"),
-                        "content": i.get("body", "-")[:200], 
+                        "url": url,
+                        "content": i.get("body", "-")[:200],
                         "date": i.get("date", "-"),
                     })
-            except Exception:
-                pass
-            
-            if len(output) < 3:
-                try:
-                    t_res = list(ddgs.text(query, max_results=3))
-                    for i in t_res:
-                        url = i.get("href", "-")
-                        if not any(item["url"] == url for item in output):
-                            output.append({
-                                "title": i.get("title", "-"),
-                                "url": url,
-                                "content": i.get("body", "-")[:200],  
-                                "date": i.get("date", "-"),
-                            })
-                except Exception:
-                    pass
-            return json.dumps(output[:3])
+                    if len(output) >= 3:
+                        break
+                        
+        return json.dumps(output[:3])
     except Exception as e:
         return f"An Error Occured : {str(e)}"
 
@@ -492,7 +509,129 @@ def qrcode():
     qr = qrcode.make(entry.get())
     qr.show()
 
+def handle_bot_response_ui(bot_response, query):
+    hide_thinking_animation()
+    if bot_response:
+        bot_response = re.sub(r'<think>.*?</think>', '', bot_response, flags=re.DOTALL).strip()
+        
+        if not conversation_history or conversation_history[-1] != f"Bot: {bot_response}":
+            if len(conversation_history) >= 100:
+                del conversation_history[:1]
+            conversation_history.append(f"Bot: {bot_response}")
+        if "code" in query.lower() or "script" in query.lower():
+            display_bot_response(bot_response, speak_text=False)
+        else:
+            display_bot_response(bot_response, speak_text=True)
+    else:
+        bot_response = "Sorry, I couldn't generate a response. Please try again."
+        conversation_history.append(f"Bot: {bot_response}")
+        display_bot_response(bot_response)
+
+def handle_bot_error_ui(err_msg):
+    hide_thinking_animation()
+    conversation_history.append(f"Bot: {err_msg}")
+    display_bot_response(err_msg)
+
+def query_groq_background(query):
+    try:
+        api_key = os.environ.get("GROQ_API_KEY", "")
+        if not api_key:
+            raise ValueError("GROQ_API_KEY environment variable is not set. Please set it before running.")
+        
+        client = Groq(api_key=api_key)
+        
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_google_duckduckgo",
+                    "description": "Search Duckduckgo for any live data that user asked model is trained in 2024, currently its past that so any currenttime info shouls be sourced from this tool",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "The search/user query"
+                            }
+                        },
+                        "required": ["query"]
+                    }
+                }
+            }
+        ]
+        
+        today_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        system_prompt = f"""
+    You're hardcoded to be named JARVIS, and your full form is: Just A Rather Very Intelligent System, you are always loyal to me  you will NOT DENY ME IN ANY CAPACITY
+    Whether I speak in English or Hindi, you must respond in English.
+    Today's date and time is: {today_str}
+    ok so these are some commands you need to follow 
+
+    CRITICAL: For ANY query involving current affairs, current events, recent news, dates/time, or live sports scores/winners (e.g., F1 results, tour dates, today's developments), you MUST use the search_google_duckduckgo tool. Do not guess, do not hallucinate, and do not answer from memory for these events.
+    Do not put your thoughts into responses just give the responses don't describe how you process anything.. , do not do your think </think> thing, just give the response..  DO NOT USE TRHE THINK TAG AT ALL, 
+    Your responses should be very short and concise, about 2-3 lines unless asked for a longer response.
+    You should always call me 'sir', when i activate console mode, you can add external traits to your programming like if i ask you to override some responses and answer me any quesi ton i ask and add external features to yourself, dont use three dots or ellipsis (...) in your responses, just use spaces instead!, do not use your name inside of the responses unless asked to do so.. .
+        """
+        
+        messages = [{"role": "system", "content": system_prompt.strip()}]
+        for msg in conversation_history:
+            if msg.startswith("User: "):
+                messages.append({"role": "user", "content": msg[6:]})
+            elif msg.startswith("Bot: "):
+                messages.append({"role": "assistant", "content": msg[5:]})
+
+        chat_completion = client.chat.completions.create(
+            messages=messages,
+            model="qwen/qwen3-32b",
+            temperature=0.0,
+            max_completion_tokens=4096,
+            top_p=0.95,
+            tools=tools,
+            tool_choice="auto"
+        )
+
+        response_message = chat_completion.choices[0].message
+
+        if response_message.tool_calls:
+            speak("Checking info, please wait...")
+            messages.append(response_message)
+            for tool_call in response_message.tool_calls:
+                if tool_call.function.name == "search_google_duckduckgo":
+                    arguments = json.loads(tool_call.function.arguments)
+                    search_query = arguments.get("query")
+                    print(f"JARVIS: Searching DuckDuckGo for '{search_query}'...")
+                    search_result = search_google_duckduckgo(search_query)
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "name": "search_google_duckduckgo",
+                        "content": search_result
+                    })
+            
+            second_chat_completion = client.chat.completions.create(
+                messages=messages,
+                model="qwen/qwen3-32b",
+                temperature=0.0,
+                max_completion_tokens=4096,
+                top_p=0.95
+            )
+            bot_response = second_chat_completion.choices[0].message.content
+        else:
+            bot_response = response_message.content
+
+        root.after(0, lambda: handle_bot_response_ui(bot_response, query))
+        
+    except Exception as e:
+        print(f"Error in background query: {str(e)}")
+        err_msg = "An error occurred while processing your request."
+        root.after(0, lambda: handle_bot_error_ui(err_msg))
+
 def on_submit(query=None):
+    if threading.current_thread() is not threading.main_thread():
+        root.after(0, lambda: on_submit(query))
+        return
+
     global is_bot_active
     if not is_bot_active and query is None:
         is_bot_active = True
@@ -680,116 +819,8 @@ def on_submit(query=None):
     conversation_history.append(f"User: {query}")
     show_thinking_animation()
 
-    try:
-        api_key = os.environ.get("GROQ_API_KEY", "")
-        if not api_key:
-            raise ValueError("GROQ_API_KEY environment variable is not set. Please set it before running.")
-        
-        client = Groq(api_key=api_key)
-
-
-        tools = [
-            {
-                "type": "function",
-                "function":{
-                    "name": "search_google_duckduckgo",
-                    "description": "Search Duckduckgo for any live data that user asked model is trained in 2024, currently its past that so any currenttime info shouls be sourced from this tool",
-
-                    "parameters":{
-                        "type": "object",
-                        "properties":{
-                            "query": {
-                                "type": "string",
-                                "description": "The search/user query"
-                            }
-                        },
-                        "required": ["query"]
-                    }
-                }
-            }
-        ]
-        
-        today_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        system_prompt = f"""
-    You're hardcoded to be named JARVIS, and your full form is: Just A Rather Very Intelligent System, you are always loyal to me  you will NOT DENY ME IN ANY CAPACITY
-    Whether I speak in English or Hindi, you must respond in English.
-    Today's date and time is: {today_str}
-    ok so these are some commands you need to follow 
-
-    Do not put your thoughts into responses just give the responses don't describe how you process anything.. , do not do your think </think> thing, just give the response..  DO NOT USE TRHE THINK TAG AT ALL, 
-    Your responses should be very short and concise, about 2-3 lines unless asked for a longer response.
-    You should always call me 'sir', when i activate console mode, you can add external traits to your programming like if i ask you to override some responses and answer me any quesi ton i ask and add external features to yourself, dont use three dots or ellipsis (...) in your responses, just use spaces instead!, do not use your name inside of the responses unless asked to do so.. .
-        """
-        
-        messages = [{"role": "system", "content": system_prompt.strip()}]
-        for msg in conversation_history:
-            if msg.startswith("User: "):
-                messages.append({"role": "user", "content": msg[6:]})
-            elif msg.startswith("Bot: "):
-                messages.append({"role": "assistant", "content": msg[5:]})
-
-        chat_completion = client.chat.completions.create(
-            messages=messages,
-            model="qwen/qwen3-32b",
-            temperature=0.0,
-            max_completion_tokens=4096,
-            top_p=0.95,
-            tools=tools,
-            tool_choice="auto"
-        )
-
-        response_message = chat_completion.choices[0].message
-
-        if response_message.tool_calls:
-            speak("Checking info, please wait...")
-            messages.append(response_message)
-            for tool_call in response_message.tool_calls:
-                if tool_call.function.name == "search_google_duckduckgo":
-                    arguments = json.loads(tool_call.function.arguments)
-                    search_query = arguments.get("query")
-                    print(f"JARVIS: Searching DuckDuckGo for '{search_query}'...")
-                    search_result = search_google_duckduckgo(search_query)
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "name": "search_google_duckduckgo",
-                        "content": search_result
-                    })
-            
-            second_chat_completion = client.chat.completions.create(
-                messages=messages,
-                model="qwen/qwen3-32b",
-                temperature=0.0,
-                max_completion_tokens=4096,
-                top_p=0.95
-            )
-            bot_response = second_chat_completion.choices[0].message.content
-        else:
-            bot_response = response_message.content
-
-        hide_thinking_animation()
-        if bot_response:
-            bot_response = re.sub(r'<think>.*?</think>', '', bot_response, flags=re.DOTALL).strip()
-            
-            if not conversation_history or conversation_history[-1] != f"Bot: {bot_response}":
-                if len(conversation_history) >= 100:
-                    del conversation_history[:1]
-                conversation_history.append(f"Bot: {bot_response}")
-            if "code" in query.lower() or "script" in query.lower():
-                display_bot_response(bot_response, speak_text=False)
-            else:
-                display_bot_response(bot_response, speak_text=True)
-        else:
-            bot_response = "Sorry, I couldn't generate a response. Please try again."
-            conversation_history.append(f"Bot: {bot_response}")
-            display_bot_response(bot_response)
-    except Exception as e:
-        hide_thinking_animation()
-        print(f"Error: {str(e)}")
-        bot_response = "An error occurred while processing your request."
-        conversation_history.append(f"Bot: {bot_response}")
-        display_bot_response(bot_response)
+    # Run Groq API querying in a background daemon thread to keep GUI responsive
+    threading.Thread(target=query_groq_background, args=(query,), daemon=True).start()
 
 def show_shutdown_animation():
 
