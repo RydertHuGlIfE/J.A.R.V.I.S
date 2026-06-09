@@ -38,6 +38,9 @@ from pathlib import Path
 import concurrent.futures
 
 
+def_mic_state = 1
+
+
 def get_clipboard():
     if os.environ.get("WAYLAND_DISPLAY"):
         try:
@@ -421,7 +424,11 @@ def recognize_voice():
     try:
         with sr.Microphone(device_index=0) as source:
             print("Listening...")
-            recognizer.adjust_for_ambient_noise(source, duration=0.5)
+            if def_mic_state == 1:
+                recognizer.adjust_for_ambient_noise(source, duration=0.5)
+            else:
+                print("mic ded")
+                return
 
             try:
                 audio = recognizer.listen(source, timeout=15, phrase_time_limit=9)
@@ -807,14 +814,9 @@ def on_submit(query=None):
             display_bot_response(bot_response)
         return
         
-    if any(k in q for k in ["open whatsapp", "whatsapp", "whats app"]):    
+    if any(k in q for k in ["open whatsapp", "whatsapp", "whats app", "WhatsApp"]):    
         webbrowser.open("https://web.whatsapp.com")
         bot_response = "Opening WhatsApp, Sir."
-        display_bot_response(bot_response)
-        return
-    if any(k in q for k in ["switch window", "change window", "next window", "alt tab"]):
-        press_hotkey('alt', 'tab')
-        bot_response = "Switching to the next window."
         display_bot_response(bot_response)
         return
     if "speed test" in q or "speedtest" in q:
@@ -834,7 +836,6 @@ def on_submit(query=None):
     conversation_history.append(f"User: {query}")
     show_thinking_animation()
 
-    # Run Groq API querying in a background daemon thread to keep GUI responsive
     threading.Thread(target=query_groq_background, args=(query,), daemon=True).start()
 
 def show_shutdown_animation():
