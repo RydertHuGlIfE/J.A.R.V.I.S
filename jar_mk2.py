@@ -53,16 +53,35 @@ def search_google_duckduckgo(query):
     try:
         with DDGS() as ddgs:
             output = []
-            results = list(ddgs.text(query))
-            for r in results[:3]:
-                output.append({
-                    "title": r.get("title", ""),
-                    "href": r.get("href", ""),
-                    "body": r.get("body", "")[:200]
-                })
-            return json.dumps(output)
+            try:
+                new_res = list(ddgs.news(query, max_results=3))
+                for i in new_res:
+                    output.append({
+                        "title": i.get("title", "-"),
+                        "url": i.get("url", "-"),
+                        "content": i.get("body", "-")[:200], 
+                        "date": i.get("date", "-"),
+                    })
+            except Exception:
+                pass
+            
+            if len(output) < 3:
+                try:
+                    t_res = list(ddgs.text(query, max_results=3))
+                    for i in t_res:
+                        url = i.get("href", "-")
+                        if not any(item["url"] == url for item in output):
+                            output.append({
+                                "title": i.get("title", "-"),
+                                "url": url,
+                                "content": i.get("body", "-")[:200],  
+                                "date": i.get("date", "-"),
+                            })
+                except Exception:
+                    pass
+            return json.dumps(output[:3])
     except Exception as e:
-        return f"An error occured : {str(e)}"
+        return f"An Error Occured : {str(e)}"
 
 def set_clipboard(text):
     if os.environ.get("WAYLAND_DISPLAY"):
