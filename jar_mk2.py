@@ -63,6 +63,22 @@ class SuppressStderr:
 def_mic_state = 0
 search_cache = {}
 
+# Global session for connection pooling
+scrape_session = requests.Session()
+scrape_session.headers.update({
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+})
+
+def warmup_scraper():
+    """Silent request on boot to establish DNS and SSL instantly"""
+    try:
+        scrape_session.get("https://lite.duckduckgo.com/lite/", timeout=5.0)
+    except Exception:
+        pass
+
+# Start the connection warm-up in a background thread immediately
+threading.Thread(target=warmup_scraper, daemon=True).start()
+
 
 def get_clipboard():
     if os.environ.get("WAYLAND_DISPLAY"):
@@ -102,10 +118,10 @@ def search_google_duckduckgo(query):
         print(f"JARVIS: Scraping DDG Lite for query: '{clean_query}'...")
         url = "https://lite.duckduckgo.com/lite/"
         params = {"q": clean_query}
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
-        }
-        r = requests.get(url, params=params, headers=headers, timeout=4.0)
+        
+        scrape_start = time.time()
+        r = scrape_session.get(url, params=params, timeout=4.0)
+        print(f"JARVIS: Scrape network call took {time.time() - scrape_start:.2f} seconds.")
         if r.status_code != 200:
             return "Error: Unable to fetch search results."
 
@@ -244,23 +260,54 @@ def capture_selected_text():
         break
 
 
-DARK_BG = "#0A0F14"
-ACCENT_COLOR = "#00B8D4"
-ACCENT_COLOR_SECONDARY = "#00E5FF"
-TEXT_COLOR = "#F7E2F8"
-ENTRY_BG = "#111C26"
-BUTTON_BG = "#00B8D4"
-BUTTON_FG = "#0A0F14"
-ACTIVE_GREEN = "#19E65D"
-INACTIVE_RED = "#FF1744"
-GRADIENT_TOP = "#0A0F14"
-GRADIENT_BOTTOM = "#0A0F14"
+# ═══════════════════════════════════════════════════════════════════
+# ██  J.A.R.V.I.S  HUD  DESIGN  SYSTEM  v2.0  ██
+# ═══════════════════════════════════════════════════════════════════
 
-FONT_NAME = "Consolas"
-HEADER_FONT = (FONT_NAME, 18, "bold")
-NORMAL_FONT = (FONT_NAME, 12)
-BUTTON_FONT = (FONT_NAME, 12, "bold")
-STATUS_FONT = (FONT_NAME, 10)
+# ── Core Palette ──
+DARK_BG = "#050505"                    # Void Black
+GLASS_BG = "#0D0D0D"                   # 20% charcoal glass layer
+GLASS_PANEL = "#111111"                # Panel interior
+ACCENT_COLOR = "#00E5FF"               # Glowing Cyan (Primary)
+ACCENT_COLOR_SECONDARY = "#FFB300"     # Arc Gold (Secondary)
+TEXT_COLOR = "#E0F7FA"                 # Light cyan-tinted white
+TEXT_DIM = "#4A6572"                   # Dimmed structural text
+ENTRY_BG = "#0A0E12"                   # Deep input field bg
+BUTTON_BG = "#00E5FF"                  # Cyan button
+BUTTON_FG = "#050505"                  # Dark text on buttons
+ACTIVE_GREEN = "#00E676"               # System online
+INACTIVE_RED = "#FF003C"               # Danger / Critical Red
+GRADIENT_TOP = "#050505"               # Gradient start
+GRADIENT_BOTTOM = "#0A1520"            # Gradient end (subtle blue)
+RING_CYAN = "#00E5FF"                  # Concentric ring color 1
+RING_GOLD = "#FFB300"                  # Concentric ring color 2
+HEX_GRID_COLOR = "#00E5FF"             # Hex overlay stroke
+GLOW_CYAN_SOFT = "#004D5A"             # Subtle cyan glow for borders
+GLOW_GOLD_SOFT = "#5A3D00"             # Subtle gold glow for borders
+SEPARATOR_COLOR = "#0D3B47"            # Divider lines
+
+# ── Typography ──
+FONT_DISPLAY = "Orbitron"              # Geometric sans-serif (titles)
+FONT_MONO = "JetBrains Mono"           # Monospaced (data readouts)
+FONT_FALLBACK = "Consolas"             # Fallback monospace
+FONT_NAME = FONT_MONO                  # Default body font
+HEADER_FONT = (FONT_DISPLAY, 18, "bold")
+NORMAL_FONT = (FONT_MONO, 11)
+BUTTON_FONT = (FONT_DISPLAY, 11, "bold")
+STATUS_FONT = (FONT_MONO, 9)
+DATA_FONT = (FONT_MONO, 10)            # For HUD data readouts
+TITLE_FONT = (FONT_DISPLAY, 24, "bold")
+
+# ── HUD Animation Config ──
+HUD_RING_COUNT = 4                     # Number of concentric rings
+HUD_RING_BASE_RADIUS = 40              # Smallest ring radius
+HUD_RING_GAP = 18                      # Gap between rings
+HUD_RING_SPEED_BASE = 0.8              # Degrees per frame (base)
+HEX_GRID_SIZE = 22                     # Hex cell size in pixels
+WAVEFORM_BARS = 32                     # Number of waveform bars
+WAVEFORM_MAX_HEIGHT = 40               # Max bar height
+import math
+import random
 
 
 is_bot_active = False
@@ -552,7 +599,7 @@ def show_deactivation_animation():
         if alpha <= 0:
             flash_frame.destroy()
             return
-        flash_frame.configure(bg=f'#{int(255 * alpha):02x}{int(23 * alpha):02x}{int(68 * alpha):02x}')
+        flash_frame.configure(bg=f'#{int(255 * alpha):02x}{int(0 * alpha):02x}{int(60 * alpha):02x}')
         root.after(30, lambda: fade_out(alpha))
 
     root.after(100, lambda: fade_out(1.0))
@@ -616,15 +663,16 @@ def query_groq_background(query):
         today_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         system_prompt = f"""
-    You're hardcoded to be named JARVIS, and your full form is: Just A Rather Very Intelligent System, you are always loyal to me  you will NOT DENY ME IN ANY CAPACITY
+    You're hardcoded to be named JARVIS, and your full form is: Just A Rather Very Intelligent System. You are always loyal to me, you will NOT DENY ME IN ANY CAPACITY.
     Whether I speak in English or Hindi, you must respond in English.
     Today's date and time is: {today_str}
-    ok so these are some commands you need to follow 
 
-    CRITICAL: For ANY query involving current affairs, current events, recent news, dates/time, or live sports scores/winners (e.g., F1 results, tour dates, today's developments), you MUST use the search_google_duckduckgo tool. Do not guess, do not hallucinate, and do not answer from memory for these events.
-    Do not put your thoughts into responses just give the responses don't describe how you process anything.. , do not do your think </think> thing, just give the response..  DO NOT USE TRHE THINK TAG AT ALL, 
+    CRITICAL: You are trained on data up to 2024. It is currently past that. For any information you are not sure about, or if it requires inquiry past 2024, you must use the search_google_duckduckgo tool.
+    Use your own judgment: if you have rock-solid evidence in your training data, do NOT use the tool. Basic conversation should NOT use this tool.
+    
+    Do not put your thoughts into responses just give the responses don't describe how you process anything. Do not use your think </think> thing, just give the response. DO NOT USE THE THINK TAG AT ALL.
     Your responses should be very short and concise, about 2-3 lines unless asked for a longer response.
-    You should always call me 'sir', when i activate console mode, you can add external traits to your programming like if i ask you to override some responses and answer me any quesi ton i ask and add external features to yourself, dont use three dots or ellipsis (...) in your responses, just use spaces instead!, do not use your name inside of the responses unless asked to do so.. .
+    You should always call me 'sir'. Do not use three dots or ellipsis (...) in your responses, just use spaces instead! Do not use your name inside of the responses unless asked to do so.
         """
         
         messages = [{"role": "system", "content": system_prompt.strip()}]
@@ -634,29 +682,19 @@ def query_groq_background(query):
             elif msg.startswith("Bot: "):
                 messages.append({"role": "assistant", "content": msg[5:]})
 
-        # Search enforcement heuristics
-        keywords = ["who", "what", "where", "when", "why", "which", "score", "winner", "result", 
-                    "standing", "match", "game", "gp", "prix", "playoff", "tournament", "date", 
-                    "weather", "news", "current", "latest", "time", "happen", "yesterday", 
-                    "today", "tomorrow", "this year", "2025", "2026", "podium", "position", 
-                    "rank", "info", "about", "details", "tour", "ticket", "event", "schedule", 
-                    "live", "scorecard"]
+        # Smart Real-Time Heuristics
+        live_keywords = ["latest", "news", "today", "yesterday", "tomorrow", "current", 
+                         "score", "winner", "result", "recent", "update", "live"]
         
-        force_search = any(kw in query.lower() for kw in keywords)
+        force_search = False
+        if query:
+            import re
+            force_search = any(re.search(rf"\b{kw}\b", query.lower()) for kw in live_keywords)
         
-        # Follow-up detection: short queries when history exists
-        if len(query.split()) < 8 and conversation_history:
-            greetings = ["hi", "hello", "hey", "thanks", "thank you", "bye", "goodbye", "ok", "okay", "yes", "no", "sure", "clear", "wipe", "help"]
-            if query.lower().strip() not in greetings:
-                force_search = True
+        if force_search and messages and messages[-1]["role"] == "user":
+            messages[-1]["content"] += "\n(CRITICAL: You MUST call search_google_duckduckgo to get real-world data for this query. Do NOT guess.)"
 
         tool_choice = "auto"
-        said_checking = False
-        if force_search:
-            speak("Checking info, please wait...")
-            said_checking = True
-            if messages and messages[-1]["role"] == "user":
-                messages[-1]["content"] += "\n(Note: You MUST call the search_google_duckduckgo tool to search the web for real-time information. Do not guess or answer from memory.)"
 
         chat_completion = client.chat.completions.create(
             messages=messages,
@@ -672,8 +710,7 @@ def query_groq_background(query):
         response_message = chat_completion.choices[0].message
 
         if response_message.tool_calls:
-            if not said_checking:
-                speak("Checking info, please wait...")
+            speak("Checking info, please wait...")
             messages.append(response_message)
             for tool_call in response_message.tool_calls:
                 if tool_call.function.name == "search_google_duckduckgo":
@@ -901,7 +938,7 @@ def show_shutdown_animation():
     overlay = Frame(root, bg=DARK_BG, width=root.winfo_width(), height=root.winfo_height())
     overlay.place(x=0, y=0)
 
-    shutdown_label = Label(overlay, text="Powering Down System", font=("Consolas", 24, "bold"), bg=DARK_BG, fg=INACTIVE_RED)
+    shutdown_label = Label(overlay, text="◈  POWERING DOWN  ◈", font=(FONT_DISPLAY, 22, "bold"), bg=DARK_BG, fg=INACTIVE_RED)
     shutdown_label.place(relx=0.5, rely=0.5, anchor="center")
 
     root.update()
@@ -1002,6 +1039,7 @@ def create_circle(canvas, x, y, r, **kwargs):
     return canvas.create_oval(x-r, y-r, x+r, y+r, **kwargs)
 
 class GradientFrame(Canvas):
+    """Vertical gradient background canvas for HUD aesthetic."""
     def __init__(self, parent, color1=GRADIENT_TOP, color2=GRADIENT_BOTTOM, **kwargs):
         Canvas.__init__(self, parent, **kwargs)
         self._color1 = color1
@@ -1012,22 +1050,24 @@ class GradientFrame(Canvas):
         self.delete("gradient")
         width = self.winfo_width()
         height = self.winfo_height()
-        limit = width
+        if height == 0:
+            return
         (r1, g1, b1) = self.winfo_rgb(self._color1)
         (r2, g2, b2) = self.winfo_rgb(self._color2)
-        r_ratio = float(r2-r1) / limit
-        g_ratio = float(g2-g1) / limit
-        b_ratio = float(b2-b1) / limit
-
-        for i in range(limit):
+        r_ratio = float(r2 - r1) / height
+        g_ratio = float(g2 - g1) / height
+        b_ratio = float(b2 - b1) / height
+        for i in range(height):
             nr = int(r1 + (r_ratio * i))
             ng = int(g1 + (g_ratio * i))
             nb = int(b1 + (b_ratio * i))
             color = "#%4.4x%4.4x%4.4x" % (nr, ng, nb)
-            self.create_line(i, 0, i, height, tags=("gradient",), fill=color)
+            self.create_line(0, i, width, i, tags=("gradient",), fill=color)
         self.lower("gradient")
 
+
 class HoverButton(Button):
+    """Button with hover glow effect."""
     def __init__(self, master, **kw):
         Button.__init__(self, master=master, **kw)
         self.defaultBackground = self["background"]
@@ -1042,154 +1082,330 @@ class HoverButton(Button):
     def on_leave(self, e):
         self['background'] = self.defaultBackground
         self['foreground'] = self.defaultForeground
- 
+
+
+# ═══════════════════════════════════════════════════════════════════
+# ██  HUD CANVAS COMPONENTS  ██
+# ═══════════════════════════════════════════════════════════════════
+
+class HUDRingCanvas(Canvas):
+    """Concentric rotating data rings with tick marks."""
+    def __init__(self, parent, size=200, **kwargs):
+        kwargs.setdefault('highlightthickness', 0)
+        kwargs.setdefault('bg', DARK_BG)
+        Canvas.__init__(self, parent, width=size, height=size, **kwargs)
+        self.size = size
+        self.cx = size // 2
+        self.cy = size // 2
+        self.angles = [0.0] * HUD_RING_COUNT
+        self.tick_items = []
+        self._draw_rings()
+        self._animate()
+
+    def _draw_rings(self):
+        for i in range(HUD_RING_COUNT):
+            r = HUD_RING_BASE_RADIUS + i * HUD_RING_GAP
+            color = RING_CYAN if i % 2 == 0 else RING_GOLD
+            dash = (8, 6) if i % 2 == 0 else (4, 10)
+            self.create_oval(
+                self.cx - r, self.cy - r, self.cx + r, self.cy + r,
+                outline=color, width=1, dash=dash, tags=f"ring_{i}"
+            )
+            # Tick marks at 30° intervals
+            num_ticks = 12
+            for t in range(num_ticks):
+                angle = math.radians(t * 30)
+                x1 = self.cx + (r - 4) * math.cos(angle)
+                y1 = self.cy + (r - 4) * math.sin(angle)
+                x2 = self.cx + (r + 4) * math.cos(angle)
+                y2 = self.cy + (r + 4) * math.sin(angle)
+                tick = self.create_line(x1, y1, x2, y2, fill=color, width=1, tags=f"tick_{i}")
+                self.tick_items.append((tick, i, t))
+
+    def _animate(self):
+        for i in range(HUD_RING_COUNT):
+            speed = HUD_RING_SPEED_BASE + i * 0.4
+            direction = 1 if i % 2 == 0 else -1
+            self.angles[i] += speed * direction
+
+            # Rotate tick marks
+            r = HUD_RING_BASE_RADIUS + i * HUD_RING_GAP
+            for tick, ring_idx, t_idx in self.tick_items:
+                if ring_idx != i:
+                    continue
+                angle = math.radians(t_idx * 30 + self.angles[i])
+                x1 = self.cx + (r - 4) * math.cos(angle)
+                y1 = self.cy + (r - 4) * math.sin(angle)
+                x2 = self.cx + (r + 4) * math.cos(angle)
+                y2 = self.cy + (r + 4) * math.sin(angle)
+                self.coords(tick, x1, y1, x2, y2)
+
+        self.after(50, self._animate)
+
+
+class HexGridCanvas(Canvas):
+    """Hexagonal grid overlay with subtle glow."""
+    def __init__(self, parent, **kwargs):
+        kwargs.setdefault('highlightthickness', 0)
+        kwargs.setdefault('bg', DARK_BG)
+        Canvas.__init__(self, parent, **kwargs)
+        self.bind("<Configure>", self._draw_grid)
+
+    def _draw_grid(self, event=None):
+        self.delete("hex")
+        w = self.winfo_width()
+        h = self.winfo_height()
+        s = HEX_GRID_SIZE
+        hex_h = s * math.sqrt(3)
+        cols = int(w / (s * 1.5)) + 2
+        rows = int(h / hex_h) + 2
+        for r in range(rows):
+            for c in range(cols):
+                cx = c * s * 1.5
+                cy = r * hex_h + (hex_h / 2 if c % 2 else 0)
+                points = []
+                for k in range(6):
+                    angle = math.radians(60 * k + 30)
+                    points.extend([cx + s * math.cos(angle), cy + s * math.sin(angle)])
+                is_active = random.random() < 0.05
+                fill_color = "#001519" if is_active else ""
+                self.create_polygon(
+                    points, outline="#00252E", fill=fill_color,
+                    width=1, tags="hex"
+                )
+
+
+class WaveformCanvas(Canvas):
+    """Audio waveform visualizer bars."""
+    def __init__(self, parent, **kwargs):
+        kwargs.setdefault('highlightthickness', 0)
+        kwargs.setdefault('bg', DARK_BG)
+        kwargs.setdefault('height', WAVEFORM_MAX_HEIGHT + 10)
+        Canvas.__init__(self, parent, **kwargs)
+        self.bar_ids = []
+        self.bar_targets = [0] * WAVEFORM_BARS
+        self.bar_heights = [0.0] * WAVEFORM_BARS
+        self._init_bars()
+        self._animate()
+
+    def _init_bars(self):
+        bar_w = 6
+        gap = 3
+        total_w = WAVEFORM_BARS * (bar_w + gap)
+        start_x = 10
+        for i in range(WAVEFORM_BARS):
+            x = start_x + i * (bar_w + gap)
+            # Interpolate color from cyan to gold
+            t = i / max(WAVEFORM_BARS - 1, 1)
+            r = int(0 + t * 255)
+            g = int(229 - t * 50)
+            b = int(255 - t * 255)
+            color = f"#{r:02x}{g:02x}{b:02x}"
+            bar = self.create_rectangle(
+                x, WAVEFORM_MAX_HEIGHT, x + bar_w, WAVEFORM_MAX_HEIGHT,
+                fill=color, outline="", tags="bar"
+            )
+            self.bar_ids.append(bar)
+
+    def _animate(self):
+        # Generate smooth random targets
+        for i in range(WAVEFORM_BARS):
+            if random.random() < 0.3:
+                self.bar_targets[i] = random.randint(5, WAVEFORM_MAX_HEIGHT)
+            # Smooth interpolation
+            self.bar_heights[i] += (self.bar_targets[i] - self.bar_heights[i]) * 0.15
+
+            bar_w = 6
+            gap = 3
+            x = 10 + i * (bar_w + gap)
+            h = int(self.bar_heights[i])
+            self.coords(self.bar_ids[i], x, WAVEFORM_MAX_HEIGHT - h, x + bar_w, WAVEFORM_MAX_HEIGHT)
+
+        self.after(80, self._animate)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# ██  ROOT WINDOW & HUD LAYOUT  ██
+# ═══════════════════════════════════════════════════════════════════
 
 root = tk.Tk()
-root.title("J.A.R.V.I.S")
-root.geometry("1024x850")
+root.title("J.A.R.V.I.S  //  MARK II")
+root.geometry("1100x900")
 img = PhotoImage(file="jaricon.png")
 root.iconphoto(False, img)
 root.configure(bg=DARK_BG)
 root.resizable(True, True)
 
-
+# ── Background gradient ──
 background = GradientFrame(root)
 background.pack(fill="both", expand=True)
 
+# ── Hex grid overlay (behind everything) ──
+hex_overlay = HexGridCanvas(background)
+hex_overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
 
-main_container = Frame(background, bg=DARK_BG, padx=20, pady=20)
-main_container.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.95, relheight=0.95)
+# ── Main container (glass panel) ──
+main_container = Frame(background, bg=GLASS_BG, padx=20, pady=15,
+                       highlightbackground=GLOW_CYAN_SOFT, highlightthickness=1)
+main_container.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.94, relheight=0.94)
 
+# ═══════════ TITLE BAR ═══════════
+title_frame = Frame(main_container, bg=GLASS_BG, height=65)
+title_frame.pack(fill="x", pady=(0, 8))
 
-title_frame = Frame(main_container, bg=DARK_BG, height=60)
-title_frame.pack(fill="x", pady=(0, 15))
+# Left: Title + rings
+title_left = Frame(title_frame, bg=GLASS_BG)
+title_left.pack(side="left", fill="y")
 
+hud_rings = HUDRingCanvas(title_left, size=60)
+hud_rings.pack(side="left", padx=(5, 12))
 
-app_title_frame = Frame(title_frame, bg=DARK_BG)
-app_title_frame.pack(side="left", padx=20, pady=10)
+title_text_frame = Frame(title_left, bg=GLASS_BG)
+title_text_frame.pack(side="left")
 
+title_label = Label(title_text_frame, text="J.A.R.V.I.S",
+                    font=TITLE_FONT, bg=GLASS_BG, fg=ACCENT_COLOR)
+title_label.pack(anchor="w")
 
-title_canvas = Canvas(app_title_frame, width=200, height=50, bg=DARK_BG, highlightthickness=0)
-title_canvas.pack()
+subtitle_label = Label(title_text_frame, text="MARK II  //  HOLOGRAPHIC INTERFACE",
+                       font=(FONT_MONO, 8), bg=GLASS_BG, fg=TEXT_DIM)
+subtitle_label.pack(anchor="w")
 
+# Right: Status indicator
+status_frame = Frame(title_frame, bg=GLASS_BG)
+status_frame.pack(side="right", padx=15)
 
-title_canvas.create_text(0, 25, text="J.A.R.V.I.S", font=("Cantarell", 21),
-                         fill=ACCENT_COLOR_SECONDARY, anchor="w", tags="title_text")
-
-title_canvas.create_text(0, 25, text="J.A.R.V.I.S", font=("Cantarell", 21),
-                         fill=ACCENT_COLOR, anchor="w", tags="title_text_top")
-
-
-status_frame = Frame(title_frame, bg=DARK_BG)
-status_frame.pack(side="right", padx=19)
-
-
-status_canvas = Canvas(status_frame, width=30, height=30, bg=DARK_BG, highlightthickness=0)
+status_canvas = Canvas(status_frame, width=30, height=30, bg=GLASS_BG, highlightthickness=0)
 status_canvas.pack(side="left")
-
 
 status_pulse = create_circle(status_canvas, 15, 15, 10, fill=INACTIVE_RED, outline=INACTIVE_RED)
 status_circle = create_circle(status_canvas, 15, 15, 5, fill=INACTIVE_RED, outline=INACTIVE_RED)
 
-status_text = Label(status_frame, text="STANDBY", font=("Cantarell", 12),
-                    bg=DARK_BG, fg=TEXT_COLOR)
+status_text = Label(status_frame, text="STANDBY", font=STATUS_FONT,
+                    bg=GLASS_BG, fg=TEXT_DIM)
 status_text.pack(side="left", padx=5)
 
+# ═══════════ HEADER STRIP ═══════════
+header_frame = Frame(main_container, bg=GLASS_BG, height=25)
+header_frame.pack(fill="x", pady=(0, 6))
 
-header_frame = Frame(main_container, bg=DARK_BG, height=30)
-header_frame.pack(fill="x", pady=(0, 10))
+# Indicator bars (alternating cyan/gold)
+for i in range(8):
+    color = ACCENT_COLOR if i % 2 == 0 else ACCENT_COLOR_SECONDARY
+    w = 30 if i % 3 == 0 else 15
+    indicator = Frame(header_frame, width=w, height=2, bg=color)
+    indicator.pack(side="left", padx=3)
 
+# System data readouts on the right
+time_label = Label(header_frame, text="", font=DATA_FONT,
+                   bg=GLASS_BG, fg=ACCENT_COLOR)
+time_label.pack(side="right", padx=8)
 
-for i in range(5):
-    indicator = Frame(header_frame, width=20, height=3, bg=ACCENT_COLOR)
-    indicator.pack(side="left", padx=5)
+cpu_label = Label(header_frame, text="CPU: --", font=DATA_FONT,
+                  bg=GLASS_BG, fg=TEXT_DIM)
+cpu_label.pack(side="right", padx=8)
 
-
-    if i % 2 == 0:
-        indicator.config(bg=ACCENT_COLOR_SECONDARY)
-
-
-time_label = Label(header_frame, text="", font=(FONT_NAME, 10),
-                  bg=DARK_BG, fg=TEXT_COLOR)
-time_label.pack(side="right", padx=10)
+# Separator
+sep = Frame(main_container, height=1, bg=SEPARATOR_COLOR)
+sep.pack(fill="x", pady=(0, 8))
 
 def update_time():
     current_time = datetime.now().strftime("%H:%M:%S")
-    time_label.config(text=f"SYS TIME: {current_time}", font=("Orbitron", 10))
+    time_label.config(text=f"◈ SYS.TIME {current_time}")
+    # Simple CPU readout
+    try:
+        load = os.getloadavg()[0]
+        cpu_label.config(text=f"LOAD: {load:.1f}")
+    except Exception:
+        pass
     root.after(1000, update_time)
 
 update_time()
 
+# ═══════════ CONVERSATION PANEL ═══════════
+content_frame = Frame(main_container, bg=GLASS_PANEL,
+                      highlightbackground=GLOW_CYAN_SOFT, highlightthickness=1)
+content_frame.pack(fill="both", expand=True, pady=(0, 8))
 
-content_frame = Frame(main_container, bg=ENTRY_BG, highlightbackground=ACCENT_COLOR,
-                     highlightthickness=1)
-content_frame.pack(fill="both", expand=True, pady=(0, 15))
-
-
-inner_content = Frame(content_frame, bg=ENTRY_BG, padx=10, pady=10)
+inner_content = Frame(content_frame, bg=GLASS_PANEL, padx=8, pady=8)
 inner_content.pack(fill="both", expand=True)
 
+conversation_frame = Frame(inner_content, bg=GLASS_PANEL)
+conversation_frame.pack(fill="both", expand=True, pady=(0, 5))
 
-conversation_frame = Frame(inner_content, bg=ENTRY_BG)
-conversation_frame.pack(fill="both", expand=True, pady=(0, 10))
-
-conversation_text = scrolledtext.ScrolledText(conversation_frame, wrap=tk.WORD,
-                                             bg=ENTRY_BG, fg=TEXT_COLOR,
-                                             font=NORMAL_FONT, bd=0,
-                                             insertbackground=ACCENT_COLOR)
+conversation_text = scrolledtext.ScrolledText(
+    conversation_frame, wrap=tk.WORD,
+    bg=GLASS_PANEL, fg=TEXT_COLOR,
+    font=NORMAL_FONT, bd=0,
+    insertbackground=ACCENT_COLOR,
+    selectbackground=GLOW_CYAN_SOFT,
+    selectforeground=TEXT_COLOR
+)
 conversation_text.pack(fill="both", expand=True)
 
-
-conversation_text.tag_configure("user_tag", foreground=ACCENT_COLOR_SECONDARY, font=(FONT_NAME, 12, "bold"))
+# Configure text tags with new design system
+conversation_text.tag_configure("user_tag", foreground=ACCENT_COLOR_SECONDARY, font=(FONT_DISPLAY, 11, "bold"))
 conversation_text.tag_configure("user_text", foreground=TEXT_COLOR, font=NORMAL_FONT)
-conversation_text.tag_configure("bot_tag", foreground=ACTIVE_GREEN, font=(FONT_NAME, 12, "bold"))
+conversation_text.tag_configure("bot_tag", foreground=ACTIVE_GREEN, font=(FONT_DISPLAY, 11, "bold"))
 conversation_text.tag_configure("bot_text", foreground=TEXT_COLOR, font=NORMAL_FONT)
-conversation_text.tag_configure("thinking_indicator", foreground="#888888", font=(FONT_NAME, 12, "italic"))
+conversation_text.tag_configure("thinking_indicator", foreground=TEXT_DIM, font=(FONT_MONO, 11, "italic"))
 
-
-conversation_text.insert(tk.END, "All Protocols are Active...\n", "bot_tag")
+# Boot message
+conversation_text.insert(tk.END, "  ◈  ALL PROTOCOLS ACTIVE  ◈\n", "bot_tag")
 conversation_text.insert(tk.END, "\nJARVIS: ", "bot_tag")
-conversation_text.insert(tk.END, "Currently in Active State\n", "bot_text")
+conversation_text.insert(tk.END, "Holographic interface initialized. Systems nominal.\n", "bot_text")
 conversation_text.config(state=tk.DISABLED)
 
+# ═══════════ WAVEFORM VISUALIZER ═══════════
+waveform = WaveformCanvas(main_container)
+waveform.pack(fill="x", pady=(0, 6))
 
-input_frame = Frame(main_container, bg=DARK_BG)
-input_frame.pack(fill="x", pady=10)
+# ═══════════ INPUT SECTION ═══════════
+input_frame = Frame(main_container, bg=GLASS_BG)
+input_frame.pack(fill="x", pady=(0, 8))
 
+# Glowing decorator bar
+input_decorator = Frame(input_frame, width=4, height=36, bg=ACCENT_COLOR)
+input_decorator.pack(side="left", padx=(0, 8))
 
-input_decorator = Frame(input_frame, width=5, height=30, bg=ACCENT_COLOR)
-input_decorator.pack(side="left", padx=(0, 10))
-
-
-entry_frame = Frame(input_frame, bg=ACCENT_COLOR, padx=2, pady=2)
+# Entry with glass border
+entry_frame = Frame(input_frame, bg=GLOW_CYAN_SOFT, padx=1, pady=1)
 entry_frame.pack(side="left", fill="x", expand=True)
 
 entry = Entry(entry_frame, bg=ENTRY_BG, fg=TEXT_COLOR, font=NORMAL_FONT,
-             insertbackground=ACCENT_COLOR, relief="flat")
-entry.pack(fill="x", expand=True, ipady=8, padx=10)
+              insertbackground=ACCENT_COLOR, relief="flat")
+entry.pack(fill="x", expand=True, ipady=10, padx=8)
 entry.bind("<Return>", on_enter_key)
 entry.focus_set()
 
-
-submit_button = HoverButton(input_frame, text="SEND", command=on_submit,
-                           bg=BUTTON_BG, fg=BUTTON_FG, font=BUTTON_FONT,
-                           relief="flat", padx=15, pady=8,
-                           activebackground=ACCENT_COLOR_SECONDARY, activeforeground=DARK_BG)
+# Send button
+submit_button = HoverButton(input_frame, text="⟩⟩ SEND", command=on_submit,
+                             bg=BUTTON_BG, fg=BUTTON_FG, font=BUTTON_FONT,
+                             relief="flat", padx=18, pady=8, cursor="hand2",
+                             activebackground=ACCENT_COLOR_SECONDARY,
+                             activeforeground=DARK_BG)
 submit_button.pack(side="right", padx=(10, 0))
 
+# ═══════════ FOOTER ═══════════
+footer_frame = Frame(main_container, bg=GLASS_BG)
+footer_frame.pack(fill="x")
 
-footer_frame = Frame(main_container, bg=DARK_BG)
-footer_frame.pack(fill="x", pady=10)
+footer_sep = Frame(footer_frame, height=1, bg=SEPARATOR_COLOR)
+footer_sep.pack(fill="x", pady=(0, 5))
+
+footer_left = Label(footer_frame,
+                    text="◈ VOICE: 'wake up' → activate  |  'sleep' → standby",
+                    font=(FONT_MONO, 8), bg=GLASS_BG, fg=TEXT_DIM)
+footer_left.pack(side="left")
+
+footer_right = Label(footer_frame,
+                     text="J.A.R.V.I.S  v2.0  //  HUD ACTIVE",
+                     font=(FONT_MONO, 8), bg=GLASS_BG, fg=GLOW_CYAN_SOFT)
+footer_right.pack(side="right")
 
 
-footer_line = Frame(footer_frame, height=1, bg=ACCENT_COLOR)
-footer_line.pack(fill="x", pady=(0, 5))
-
-footer_text = Label(footer_frame, text="Voice Control: 'wake up' to activate, 'sleep' to standby",
-                   font=(FONT_NAME, 9), bg=DARK_BG, fg="#888888")
-footer_text.pack()
-
-
+# ═══════════ LAUNCH ═══════════
 update_status_indicator()
 start_voice_recognition_thread()
 root.mainloop()
+
