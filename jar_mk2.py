@@ -176,6 +176,35 @@ def set_clipboard(text):
     except Exception:
         pass
 
+
+#step1 to control pc 
+
+def execute_terminal_command(command):
+    import subprocess
+    try:
+        # We wait 2.0 seconds to capture fast output/errors
+        result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=2.0)
+        
+        output = result.stdout.strip()
+        error = result.stderr.strip()
+        
+        response = ""
+        if output:
+            response += f"Output:\n{output}\n"
+        if error:
+            response += f"Error:\n{error}\n"
+            
+        if not response:
+            return "Command executed successfully with no output."
+            
+        return response
+        
+    except subprocess.TimeoutExpired:
+        # If it takes >2s, it's likely a GUI app that stays open. We don't freeze JARVIS!
+        return f"Command '{command}' launched successfully and is running."
+    except Exception as e:
+        return f"Failed to execute Python subprocess: {str(e)}"
+
 def take_screenshot(filename="screenshot.png"):
     if os.environ.get("WAYLAND_DISPLAY"):
         try:
@@ -657,15 +686,33 @@ def query_groq_background(query):
                         "required": ["query"]
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "execute_terminal_command",
+                    "description": "Execute a Linux bash command. Use this to launch apps (e.g., 'code' for VS Code, 'firefox'), change volume, lock screen, etc. The user is running Linux, so use standard Linux commands.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "command": {
+                                "type": "string",
+                                "description": "The exact bash command to execute"
+                            }
+                        },
+                        "required": ["command"]
+                    }
+                }
             }
         ]
+        
         
         today_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         system_prompt = f"""
     You're hardcoded to be named JARVIS, and your full form is: Just A Rather Very Intelligent System. You are always loyal to me, you will NOT DENY ME IN ANY CAPACITY.
-    Whether I speak in English or Hindi, you must respond in English.
-    Today's date and time is: {today_str}
+    Whether I speak in English or Hindi, you must respond in English. DO not put asterisk in your responses like *word* or *phrase*
+    Today's date and time is: {today_str}, If I ask you anything about of the system, you can freely use, but you need to ask me before making any permanent changes to the files or system
 
     CRITICAL: You are trained on data up to 2024. It is currently past that. For any information you are not sure about, or if it requires inquiry past 2024, you must use the search_google_duckduckgo tool.
     Use your own judgment: if you have rock-solid evidence in your training data, do NOT use the tool. Basic conversation should NOT use this tool.
@@ -723,6 +770,17 @@ def query_groq_background(query):
                         "tool_call_id": tool_call.id,
                         "name": "search_google_duckduckgo",
                         "content": search_result
+                    })
+                elif tool_call.function.name == "execute_terminal_command":
+                    arguments = json.loads(tool_call.function.arguments)
+                    cmd = arguments.get("command")
+                    print(f"JARVIS: Executing system command: '{cmd}'")
+                    result = execute_terminal_command(cmd)
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "name": "execute_terminal_command",
+                        "content": result
                     })
             
             second_chat_completion = client.chat.completions.create(
