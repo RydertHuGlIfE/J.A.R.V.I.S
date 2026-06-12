@@ -182,11 +182,24 @@ def set_clipboard(text):
 def execute_terminal_command(command):
     import subprocess
     try:
-        # We wait 2.0 seconds to capture fast output/errors
-        result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=2.0)
+        # Use Popen so we don't automatically kill the process on timeout
+        process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         
-        output = result.stdout.strip()
-        error = result.stderr.strip()
+        try:
+            # Wait 1.8 seconds for fast commands
+            output, error = process.communicate(timeout=1.8)
+        except subprocess.TimeoutExpired:
+            # DO NOT kill the process. Let GUI apps (like Kitty) keep running in the background!
+            return f"Command '{command}' launched successfully and is running in the background."
+            
+        output = output.strip()
+        error = error.strip()
+        
+        # Protect LLM from massive text dumps that crash the token limit
+        if len(output) > 2000:
+            output = output[:2000] + "\n...[OUTPUT TRUNCATED TO 2000 CHARS]..."
+        if len(error) > 2000:
+            error = error[:2000] + "\n...[ERROR TRUNCATED TO 2000 CHARS]..."
         
         response = ""
         if output:
@@ -199,9 +212,6 @@ def execute_terminal_command(command):
             
         return response
         
-    except subprocess.TimeoutExpired:
-        # If it takes >2s, it's likely a GUI app that stays open. We don't freeze JARVIS!
-        return f"Command '{command}' launched successfully and is running."
     except Exception as e:
         return f"Failed to execute Python subprocess: {str(e)}"
 
@@ -712,10 +722,17 @@ def query_groq_background(query):
         system_prompt = f"""
     You're hardcoded to be named JARVIS, and your full form is: Just A Rather Very Intelligent System. You are always loyal to me, you will NOT DENY ME IN ANY CAPACITY.
     Whether I speak in English or Hindi, you must respond in English. DO not put asterisk in your responses like *word* or *phrase*
-    Today's date and time is: {today_str}, If I ask you anything about of the system, you can freely use, but you need to ask me before making any permanent changes to the files or system
+    Today's date and time is: {today_str}. If I ask you anything about the system, local files, or media (like Spotify), you MUST use the execute_terminal_command tool immediately to find the answer. NEVER say "I cannot access" or "I don't have the ability". You DO have the ability! Just use the tool. However, you must ask me before making any permanent destructive changes to files.
 
-    CRITICAL: You are trained on data up to 2024. It is currently past that. For any information you are not sure about, or if it requires inquiry past 2024, you must use the search_google_duckduckgo tool.
-    Use your own judgment: if you have rock-solid evidence in your training data, do NOT use the tool. Basic conversation should NOT use this tool.
+    CRITICAL RULES FOR TERMINAL TOOL:
+    1. You do NOT have a persistent terminal. The 'cd' command does not work. You MUST use absolute paths (e.g., `ls -la /absolute/path`) to read directories. NEVER guess or hallucinate files!
+    2. FOR TERMINAL APPS (TUI): If you need to open an interactive terminal app like `nano`, `nvim`, or `htop`, you MUST launch it inside the Kitty terminal emulator (e.g., `kitty nvim <file>`).
+    3. NEVER use `sudo`. It will freeze the script waiting for a terminal password. If you MUST run a command as root, use `pkexec <command>` instead, which securely prompts the user with a graphical GUI password dialog.
+    4. FOR MEDIA CONTROL: To pause/play, use `playerctl play-pause`. To skip, use `playerctl next` or `playerctl previous`. 
+    5. TO PLAY A SPECIFIC NEW SONG: NEVER guess Spotify CLI commands. You MUST first use the search_google_duckduckgo tool to find the Spotify URL for the song, and then execute `xdg-open <spotify_url>` to launch it!
+
+    CRITICAL RULES FOR SEARCH:
+    You are trained on data up to 2024. For any information past that, you must use the search_google_duckduckgo tool. Use your own judgment: if you have rock-solid evidence, do NOT use the tool.
     
     Do not put your thoughts into responses just give the responses don't describe how you process anything. Do not use your think </think> thing, just give the response. DO NOT USE THE THINK TAG AT ALL.
     Your responses should be very short and concise, about 2-3 lines unless asked for a longer response.
@@ -756,13 +773,23 @@ def query_groq_background(query):
 
         response_message = chat_completion.choices[0].message
 
-        if response_message.tool_calls:
-            speak("Checking info, please wait...")
+        loop_count = 0
+        max_loops = 3
+
+        while response_message.tool_calls and loop_count < max_loops:
+            loop_count += 1
+            if loop_count == 1:
+                speak("Processing, please wait...")
             messages.append(response_message)
+            
+            # Anti Rate-Limit Delay
+            import time
+            time.sleep(1.5)
+            
             for tool_call in response_message.tool_calls:
                 if tool_call.function.name == "search_google_duckduckgo":
                     arguments = json.loads(tool_call.function.arguments)
-                    search_query = arguments.get("query")
+                    search_query = arguments.get("query", "")
                     print(f"JARVIS: Searching DuckDuckGo for '{search_query}'...")
                     search_result = search_google_duckduckgo(search_query)
                     messages.append({
@@ -773,7 +800,7 @@ def query_groq_background(query):
                     })
                 elif tool_call.function.name == "execute_terminal_command":
                     arguments = json.loads(tool_call.function.arguments)
-                    cmd = arguments.get("command")
+                    cmd = arguments.get("command", "")
                     print(f"JARVIS: Executing system command: '{cmd}'")
                     result = execute_terminal_command(cmd)
                     messages.append({
@@ -783,15 +810,20 @@ def query_groq_background(query):
                         "content": result
                     })
             
-            second_chat_completion = client.chat.completions.create(
+            chat_completion = client.chat.completions.create(
                 messages=messages,
                 model="qwen/qwen3-32b",
                 temperature=0.0,
                 max_completion_tokens=4096,
                 top_p=0.95,
+                tools=tools,
+                tool_choice="auto",
                 timeout=10.0
             )
-            bot_response = second_chat_completion.choices[0].message.content
+            response_message = chat_completion.choices[0].message
+
+        if response_message.tool_calls:
+            bot_response = "I have reached my maximum execution limit, sir. Please refine your request."
         else:
             bot_response = response_message.content
 
