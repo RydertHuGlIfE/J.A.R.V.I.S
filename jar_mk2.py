@@ -60,7 +60,7 @@ class SuppressStderr:
                 pass
 
 
-def_mic_state = 0
+def_mic_state =0
 search_cache = {}
 
 # Global session for connection pooling
@@ -724,6 +724,8 @@ def query_groq_background(query):
     Whether I speak in English or Hindi, you must respond in English. DO not put asterisk in your responses like *word* or *phrase*
     Today's date and time is: {today_str}. If I ask you anything about the system, local files, or media (like Spotify), you MUST use the execute_terminal_command tool immediately to find the answer. NEVER say "I cannot access" or "I don't have the ability". You DO have the ability! Just use the tool. However, you must ask me before making any permanent destructive changes to files.
 
+    CRITICAL RULE FOR ACTIONS: If I ask you to open a website, launch an app, or perform a task, DO NOT just say "I will open it" or "Please wait". You must ACTUALLY execute the `execute_terminal_command` tool IMMEDIATELY to perform the action. Never delay or wait for confirmation!
+    oh and I use chromium browser
     CRITICAL RULES FOR TERMINAL TOOL:
     1. You do NOT have a persistent terminal. The 'cd' command does not work. You MUST use absolute paths (e.g., `ls -la /absolute/path`) to read directories. NEVER guess or hallucinate files!
     2. FOR TERMINAL APPS (TUI): If you need to open an interactive terminal app like `nano`, `nvim`, or `htop`, you MUST launch it inside the Kitty terminal emulator (e.g., `kitty nvim <file>`).
@@ -732,7 +734,8 @@ def query_groq_background(query):
     5. TO PLAY A SPECIFIC NEW SONG: NEVER guess Spotify CLI commands. You MUST first use the search_google_duckduckgo tool to find the Spotify URL for the song, and then execute `xdg-open <spotify_url>` to launch it!
 
     CRITICAL RULES FOR SEARCH:
-    You are trained on data up to 2024. For any information past that, you must use the search_google_duckduckgo tool. Use your own judgment: if you have rock-solid evidence, do NOT use the tool.
+    Your training data cuts off in 2024. You are highly prone to hallucinating recent dates, numbers, and milestones. If the user asks about ANY facts, news, milestones, subscriber counts, or events, YOU MUST USE the search_google_duckduckgo tool! NEVER guess or make up dates. 
+    When you receive search results, you MUST base your answer STRICTLY and ENTIRELY on the provided search text. If the search results do not explicitly state the exact date or fact, tell the user 'I cannot find the exact information'. Do NOT invent or guess based on your training data!
     
     Do not put your thoughts into responses just give the responses don't describe how you process anything. Do not use your think </think> thing, just give the response. DO NOT USE THE THINK TAG AT ALL.
     Your responses should be very short and concise, about 2-3 lines unless asked for a longer response.
