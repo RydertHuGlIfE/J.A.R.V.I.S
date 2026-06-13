@@ -196,10 +196,10 @@ def execute_terminal_command(command):
         error = error.strip()
         
         # Protect LLM from massive text dumps that crash the token limit
-        if len(output) > 2000:
-            output = output[:2000] + "\n...[OUTPUT TRUNCATED TO 2000 CHARS]..."
-        if len(error) > 2000:
-            error = error[:2000] + "\n...[ERROR TRUNCATED TO 2000 CHARS]..."
+        if len(output) > 800:
+            output = output[:800] + "\n...[OUTPUT TRUNCATED TO 800 CHARS]..."
+        if len(error) > 800:
+            error = error[:800] + "\n...[ERROR TRUNCATED TO 800 CHARS]..."
         
         response = ""
         if output:
@@ -816,7 +816,7 @@ def query_groq_background(query):
             
             chat_completion = client.chat.completions.create(
                 messages=messages,
-                model="qwen/qwen3-32b",
+                model="llama-3.3-70b-versatile",
                 temperature=0.0,
                 max_completion_tokens=4096,
                 top_p=0.95,
