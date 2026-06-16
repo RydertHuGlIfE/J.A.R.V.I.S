@@ -11,6 +11,12 @@ import re
 
 load_dotenv()
 
+# Create global Groq client to enable TCP connection pooling and Keep-Alive
+api_key = os.environ.get("GROQ_API_KEY", "")
+if not api_key:
+    print("Warning: GROQ_API_KEY is not set in the environment.")
+client = Groq(api_key=api_key)
+
 try:
     xauth_path = os.path.expanduser("~/.Xauthority")
     if not os.path.exists(xauth_path):
@@ -673,11 +679,7 @@ def handle_bot_error_ui(err_msg):
 
 def query_groq_background(query):
     try:
-        api_key = os.environ.get("GROQ_API_KEY", "")
-        if not api_key:
-            raise ValueError("GROQ_API_KEY environment variable is not set. Please set it before running.")
-        
-        client = Groq(api_key=api_key)
+        # Use global client to leverage connection pooling
         
         tools = [
             {
@@ -768,7 +770,7 @@ def query_groq_background(query):
 
         chat_completion = client.chat.completions.create(
             messages=messages,
-            model="qwen/qwen3-32b",
+            model="llama-3.1-8b-instant",
             temperature=0.0,
             max_completion_tokens=4096,
             top_p=0.95,
@@ -818,7 +820,7 @@ def query_groq_background(query):
             
             chat_completion = client.chat.completions.create(
                 messages=messages,
-                model="qwen/qwen3-32b",
+                model="llama-3.1-8b-instant",
                 temperature=0.0,
                 max_completion_tokens=4096,
                 top_p=0.95,
