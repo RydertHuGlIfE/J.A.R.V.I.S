@@ -100,75 +100,133 @@ def get_clipboard():
 
 #1st mcp for jarvis les gooooooooooooo
 
-def search_google_duckduckgo(query):
-    global search_cache
-    try:
-        # Strip formatting and conversational junk from the query to maximize search relevance
-        clean_query = query.lower()
-        for term in ["summarize", "bullet points", "bullet point", "in 5", "in 4", "in 3", "in 2", "in 1", "lines", "line", "summary", "please", "write", "give me", "list of", "list"]:
-            clean_query = clean_query.replace(term, "")
-        clean_query = " ".join(clean_query.split()).strip()
-        
-        # Default back if empty
-        if not clean_query:
-            clean_query = query.strip()
+import collections
+import concurrent.futures
 
-        # Check Cache
-        now = time.time()
-        if clean_query in search_cache:
-            cached_time, cached_result = search_cache[clean_query]
-            if now - cached_time < 600:
-                print(f"JARVIS: Search cache HIT for query: '{clean_query}'")
-                return cached_result
+SEARCH_CACHE_MAX_SIZE = 200
+SEARCH_CACHE_TTL = 600  # seconds
+search_cache = collections.OrderedDict()  # replaces the plain dict
 
-        print(f"JARVIS: Scraping DDG Lite for query: '{clean_query}'...")
-        url = "https://lite.duckduckgo.com/lite/"
-        params = {"q": clean_query}
-        
-        scrape_start = time.time()
-        r = scrape_session.get(url, params=params, timeout=4.0)
-        print(f"JARVIS: Scrape network call took {time.time() - scrape_start:.2f} seconds.")
-        if r.status_code != 200:
-            return "Error: Unable to fetch search results."
+def _cache_get(key):
+    entry = search_cache.get(key)
+    if not entry:
+        return None
+    ts, value = entry
+    if time.time() - ts > SEARCH_CACHE_TTL:
+        del search_cache[key]
+        return None
+    search_cache.move_to_end(key)
+    return value
 
-        soup = BeautifulSoup(r.text, "html.parser")
-        results = []
-        rows = soup.find_all("tr")
+def _cache_set(key, value):
+    search_cache[key] = (time.time(), value)
+    search_cache.move_to_end(key)
+    while len(search_cache) > SEARCH_CACHE_MAX_SIZE:
+        search_cache.popitem(last=False)  # evict oldest
 
-        for i, row in enumerate(rows):
-            link_tag = row.find("a", class_="result-link")
-            if link_tag:
-                title = link_tag.get_text(strip=True)
-                href = link_tag.get("href")
-                
-                if href and "uddg=" in href:
-                    parsed = urllib.parse.urlparse(href)
-                    href = urllib.parse.parse_qs(parsed.query).get("uddg", [href])[0]
-                elif href and href.startswith("//"):
-                    href = "https:" + href
+def _clean_query(query):
+    junk = ["summarize", "bullet points", "bullet point", "in 5", "in 4", "in 3",
+            "in 2", "in 1", "lines", "line", "summary", "please", "write",
+            "give me", "list of", "list"]
+    cleaned = query.lower()
+    for term in junk:
+        # word-boundary replace, not substring replace — fixes old bug
+        cleaned = re.sub(rf"\b{re.escape(term)}\b", "", cleaned)
+    cleaned = " ".join(cleaned.split()).strip()
+    return cleaned or query.strip()
 
-                snippet = ""
-                # Search next two rows for the snippet
-                for offset in [1, 2]:
-                    if i + offset < len(rows):
-                        snippet_td = rows[i+offset].find("td", class_="result-snippet")
-                        if snippet_td:
-                            snippet = snippet_td.get_text(strip=True)
-                            break
-
-                results.append({
-                    "title": title,
-                    "url": href,
-                    "content": snippet[:600]
-                })
-                if len(results) >= 5:
+def _parse_ddg_lite(html):
+    soup = BeautifulSoup(html, "html.parser")
+    results, rows = [], soup.find_all("tr")
+    for i, row in enumerate(rows):
+        link_tag = row.find("a", class_="result-link")
+        if not link_tag:
+            continue
+        title = link_tag.get_text(strip=True)
+        href = link_tag.get("href")
+        if href and "uddg=" in href:
+            parsed = urllib.parse.urlparse(href)
+            href = urllib.parse.parse_qs(parsed.query).get("uddg", [href])[0]
+        elif href and href.startswith("//"):
+            href = "https:" + href
+        snippet = ""
+        for offset in (1, 2):
+            if i + offset < len(rows):
+                snippet_td = rows[i + offset].find("td", class_="result-snippet")
+                if snippet_td:
+                    snippet = snippet_td.get_text(strip=True)
                     break
+        results.append({"title": title, "url": href, "content": snippet[:600]})
+        if len(results) >= 5:
+            break
+    return results
 
-        result_str = json.dumps(results)
-        search_cache[clean_query] = (now, result_str)
-        return result_str
-    except Exception as e:
-        return f"An Error Occurred: {str(e)}"
+def _parse_ddg_html(html):
+    soup = BeautifulSoup(html, "html.parser")
+    results = []
+    for result in soup.select(".result")[:5]:
+        link_tag = result.select_one(".result__a")
+        if not link_tag:
+            continue
+        href = link_tag.get("href", "")
+        if "uddg=" in href:
+            parsed = urllib.parse.urlparse(href)
+            href = urllib.parse.parse_qs(parsed.query).get("uddg", [href])[0]
+        snippet_tag = result.select_one(".result__snippet")
+        snippet = snippet_tag.get_text(strip=True) if snippet_tag else ""
+        results.append({"title": link_tag.get_text(strip=True), "url": href, "content": snippet[:600]})
+    return results
+
+def _fetch_ddg_lite(query, timeout):
+    r = scrape_session.get("https://lite.duckduckgo.com/lite/", params={"q": query}, timeout=timeout)
+    r.raise_for_status()
+    return _parse_ddg_lite(r.text)
+
+def _fetch_ddg_html(query, timeout):
+    r = scrape_session.get("https://html.duckduckgo.com/html/", params={"q": query}, timeout=timeout)
+    r.raise_for_status()
+    return _parse_ddg_html(r.text)
+
+def search_google_duckduckgo(query):
+    clean_query = _clean_query(query)
+
+    cached = _cache_get(clean_query)
+    if cached is not None:
+        print(f"JARVIS: Search cache HIT for query: '{clean_query}'")
+        return cached
+
+    print(f"JARVIS: Searching for '{clean_query}'...")
+    start = time.time()
+
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+    futures = {
+        pool.submit(_fetch_ddg_lite, clean_query, 3.0): "lite",
+        pool.submit(_fetch_ddg_html, clean_query, 3.0): "html",
+    }
+
+    results, errors = None, []
+    try:
+        for future in concurrent.futures.as_completed(futures, timeout=3.5):
+            name = futures[future]
+            try:
+                data = future.result()
+                if data:
+                    results = data
+                    print(f"JARVIS: '{name}' won in {time.time() - start:.2f}s")
+                    break
+            except Exception as e:
+                errors.append(f"{name}: {e}")
+    except concurrent.futures.TimeoutError:
+        errors.append("both endpoints timed out")
+    finally:
+        pool.shutdown(wait=False)  # don't block on the loser
+
+    if results is None:
+        return f"Error: search unavailable right now ({'; '.join(errors) if errors else 'no results'})."
+
+    result_str = json.dumps(results)
+    _cache_set(clean_query, result_str)
+    return result_str
 
 def set_clipboard(text):
     if os.environ.get("WAYLAND_DISPLAY"):
