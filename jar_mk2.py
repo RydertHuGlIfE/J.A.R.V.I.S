@@ -725,7 +725,8 @@ def query_groq_background(query):
     Today's date and time is: {today_str}. If I ask you anything about the system, local files, or media (like Spotify), you MUST use the execute_terminal_command tool immediately to find the answer. NEVER say "I cannot access" or "I don't have the ability". You DO have the ability! Just use the tool. However, you must ask me before making any permanent destructive changes to files.
 
     CRITICAL RULE FOR ACTIONS: NEVER say "I will do it", "Please wait", or "I have done it" if you haven't actually used a tool. To perform ANY action (create, delete, launch, verify), you MUST use the `execute_terminal_command` tool IMMEDIATELY. If I ask you to check if a file exists, you MUST use the tool to run `ls`. Do NOT hallucinate success!
-    CRITICAL RULE FOR JSON PARSING: When generating tool calls, DO NOT use escaped single quotes (`\\'`) inside the JSON string. It will crash the API's JSON parser. Use regular single quotes (`'`) or double quotes (`"`).
+    CRITICAL RULE FOR CASUAL CONVERSATION: If I just say "hello", "how are you", or make casual small talk, simply reply with text! DO NOT use any tools for basic conversation!
+    CRITICAL RULE FOR JSON PARSING: When generating tool calls, DO NOT use escaped single quotes (`\\'`) inside the JSON string. It will crash the API's JSON parser. strictly output valid JSON.
     oh and I use chromium browser
     CRITICAL RULES FOR TERMINAL TOOL:
     1. You do NOT have a persistent terminal. The 'cd' command does not work. You MUST use absolute paths (e.g., `ls -la /absolute/path`) to read directories. NEVER guess or hallucinate files!
@@ -735,7 +736,8 @@ def query_groq_background(query):
     5. TO PLAY A SPECIFIC NEW SONG: NEVER guess Spotify CLI commands. You MUST first use the search_google_duckduckgo tool to find the Spotify URL for the song, and then execute `xdg-open <spotify_url>` to launch it!
 
     CRITICAL RULES FOR SEARCH:
-    Your training data cuts off in 2024. You are highly prone to hallucinating recent dates, numbers, and milestones. If the user asks about ANY facts, news, milestones, subscriber counts, or events, YOU MUST USE the search_google_duckduckgo tool! NEVER guess or make up dates. 
+    Your training data cuts off in 2024. For GENERAL KNOWLEDGE (e.g., science, history, philosophy, programming, or basic facts), USE YOUR INTERNAL KNOWLEDGE! DO NOT use the search tool.
+    You must ONLY use the `search_google_duckduckgo` tool if the user asks for REAL-TIME information, RECENT NEWS, CURRENT EVENTS, or exact recent milestones (like latest subscriber counts or prices). 
     WARNING: When you receive search results, they are a messy list of text snippets. DO NOT blend dates or facts from different snippets together! Find the single most relevant sentence and quote the exact date/number from it. Base your answer STRICTLY and ENTIRELY on the provided search text. If the search results do not explicitly state the exact date or fact, tell the user 'I cannot find the exact information'. Do NOT invent or guess based on your training data!
     
     Do not put your thoughts into responses just give the responses don't describe how you process anything. Do not use your think </think> thing, just give the response. DO NOT USE THE THINK TAG AT ALL.
@@ -772,13 +774,13 @@ def query_groq_background(query):
             top_p=0.95,
             tools=tools,
             tool_choice=tool_choice,
-            timeout=10.0
+            timeout=20.0
         )
 
         response_message = chat_completion.choices[0].message
 
         loop_count = 0
-        max_loops = 3
+        max_loops = 6
 
         while response_message.tool_calls and loop_count < max_loops:
             loop_count += 1
@@ -786,9 +788,9 @@ def query_groq_background(query):
                 speak("Processing, please wait...")
             messages.append(response_message)
             
-            # Anti Rate-Limit Delay
+            # Anti Rate-Limit Delay (Reduced to prevent UI latency)
             import time
-            time.sleep(1.5)
+            time.sleep(0.2)
             
             for tool_call in response_message.tool_calls:
                 if tool_call.function.name == "search_google_duckduckgo":
@@ -816,13 +818,13 @@ def query_groq_background(query):
             
             chat_completion = client.chat.completions.create(
                 messages=messages,
-                model="llama-3.3-70b-versatile",
+                model="qwen/qwen3-32b",
                 temperature=0.0,
                 max_completion_tokens=4096,
                 top_p=0.95,
                 tools=tools,
                 tool_choice="auto",
-                timeout=10.0
+                timeout=20.0
             )
             response_message = chat_completion.choices[0].message
 
