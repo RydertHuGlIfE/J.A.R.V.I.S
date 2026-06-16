@@ -67,7 +67,6 @@ class SuppressStderr:
 
 
 def_mic_state =0
-search_cache = {}
 
 # Global session for connection pooling
 scrape_session = requests.Session()
@@ -743,23 +742,6 @@ def query_groq_background(query):
             {
                 "type": "function",
                 "function": {
-                    "name": "search_google_duckduckgo",
-                    "description": "Search Duckduckgo for any live data that user asked model is trained in 2024, currently its past that so any currenttime info shouls be sourced from this tool",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "The search/user query"
-                            }
-                        },
-                        "required": ["query"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
                     "name": "execute_terminal_command",
                     "description": "Execute a Linux bash command. Use this to launch apps (e.g., 'code' for VS Code, 'firefox'), change volume, lock screen, etc. The user is running Linux, so use standard Linux commands.",
                     "parameters": {
@@ -793,12 +775,10 @@ def query_groq_background(query):
     2. FOR TERMINAL APPS (TUI): If you need to open an interactive terminal app like `nano`, `nvim`, or `htop`, you MUST launch it inside the Kitty terminal emulator (e.g., `kitty nvim <file>`).
     3. NEVER use `sudo`. It will freeze the script waiting for a terminal password. If you MUST run a command as root, use `pkexec <command>` instead, which securely prompts the user with a graphical GUI password dialog.
     4. FOR MEDIA CONTROL: To pause/play, use `playerctl play-pause`. To skip, use `playerctl next` or `playerctl previous`. 
-    5. TO PLAY A SPECIFIC NEW SONG: NEVER guess Spotify CLI commands. You MUST first use the search_google_duckduckgo tool to find the Spotify URL for the song, and then execute `xdg-open <spotify_url>` to launch it!
+    5. TO PLAY A SPECIFIC NEW SONG: Launch it directly if possible via command line or xdg-open.
 
-    CRITICAL RULES FOR SEARCH:
-    Your training data cuts off in 2024. For GENERAL KNOWLEDGE (e.g., science, history, philosophy, programming, or basic facts), USE YOUR INTERNAL KNOWLEDGE! DO NOT use the search tool.
-    You must ONLY use the `search_google_duckduckgo` tool if the user asks for REAL-TIME information, RECENT NEWS, CURRENT EVENTS, or exact recent milestones (like latest subscriber counts or prices). 
-    WARNING: When you receive search results, they are a messy list of text snippets. DO NOT blend dates or facts from different snippets together! Find the single most relevant sentence and quote the exact date/number from it. Base your answer STRICTLY and ENTIRELY on the provided search text. If the search results do not explicitly state the exact date or fact, tell the user 'I cannot find the exact information'. Do NOT invent or guess based on your training data!
+    CRITICAL NO-SEARCH RULE:
+    You DO NOT have access to the internet or web search tools. If the user asks for real-time information or events beyond your knowledge cutoff (2024), politely state that you do not have internet/search capabilities.
     
     Do not put your thoughts into responses just give the responses don't describe how you process anything. Do not use your think </think> thing, just give the response. DO NOT USE THE THINK TAG AT ALL.
     Your responses should be very short and concise, about 2-3 lines unless asked for a longer response.
@@ -812,20 +792,10 @@ def query_groq_background(query):
             elif msg.startswith("Bot: "):
                 messages.append({"role": "assistant", "content": msg[5:]})
 
-        # Smart Real-Time Heuristics
-        live_keywords = ["latest", "news", "today", "yesterday", "tomorrow", "current", 
-                         "score", "winner", "result", "recent", "update", "live"]
-        
-        force_search = False
-        if query:
-            import re
-            force_search = any(re.search(rf"\b{kw}\b", query.lower()) for kw in live_keywords)
-        
-        if force_search and messages and messages[-1]["role"] == "user":
-            messages[-1]["content"] += "\n(CRITICAL: You MUST call search_google_duckduckgo to get real-world data for this query. Do NOT guess.)"
-
         tool_choice = "auto"
 
+        print("JARVIS: Sending request to Groq API...")
+        api_start = time.time()
         chat_completion = client.chat.completions.create(
             messages=messages,
             model="llama-3.1-8b-instant",
@@ -834,8 +804,9 @@ def query_groq_background(query):
             top_p=0.95,
             tools=tools,
             tool_choice=tool_choice,
-            timeout=20.0
+            timeout=15.0
         )
+        print(f"JARVIS: Groq API responded in {time.time() - api_start:.2f} seconds.")
 
         response_message = chat_completion.choices[0].message
 
@@ -849,22 +820,10 @@ def query_groq_background(query):
             messages.append(response_message)
             
             # Anti Rate-Limit Delay (Reduced to prevent UI latency)
-            import time
             time.sleep(0.2)
             
             for tool_call in response_message.tool_calls:
-                if tool_call.function.name == "search_google_duckduckgo":
-                    arguments = json.loads(tool_call.function.arguments)
-                    search_query = arguments.get("query", "")
-                    print(f"JARVIS: Searching DuckDuckGo for '{search_query}'...")
-                    search_result = search_google_duckduckgo(search_query)
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "name": "search_google_duckduckgo",
-                        "content": search_result
-                    })
-                elif tool_call.function.name == "execute_terminal_command":
+                if tool_call.function.name == "execute_terminal_command":
                     arguments = json.loads(tool_call.function.arguments)
                     cmd = arguments.get("command", "")
                     print(f"JARVIS: Executing system command: '{cmd}'")
@@ -876,6 +835,8 @@ def query_groq_background(query):
                         "content": result
                     })
             
+            print("JARVIS: Sending follow-up loop request to Groq API...")
+            loop_api_start = time.time()
             chat_completion = client.chat.completions.create(
                 messages=messages,
                 model="llama-3.1-8b-instant",
@@ -884,8 +845,9 @@ def query_groq_background(query):
                 top_p=0.95,
                 tools=tools,
                 tool_choice="auto",
-                timeout=20.0
+                timeout=15.0
             )
+            print(f"JARVIS: Groq API loop responded in {time.time() - loop_api_start:.2f} seconds.")
             response_message = chat_completion.choices[0].message
 
         if response_message.tool_calls:
