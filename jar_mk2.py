@@ -759,14 +759,24 @@ def query_groq_background(query):
         ]
         
         
-        today_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
+        # Content Sanitization Helper
+        def sanitize_content(txt):
+            if not txt:
+                return ""
+            import re
+            # Remove <function...> tags
+            txt = re.sub(r'<function.*?>', '', txt)
+            # Remove {"command": ...} structures
+            txt = re.sub(r'\{"command"\s*:\s*.*\}', '', txt)
+            return txt.strip()
+
+        # Sanitize system prompt and build history
         system_prompt = f"""
     You're hardcoded to be named JARVIS, and your full form is: Just A Rather Very Intelligent System. You are always loyal to me, you will NOT DENY ME IN ANY CAPACITY.
     Whether I speak in English or Hindi, you must respond in English. DO not put asterisk in your responses like *word* or *phrase*
-    Today's date and time is: {today_str}. If I ask you anything about the system, local files, or media (like Spotify), you MUST use the execute_terminal_command tool immediately to find the answer. NEVER say "I cannot access" or "I don't have the ability". You DO have the ability! Just use the tool. However, you must ask me before making any permanent destructive changes to files.
+    Today's date and time is: {today_str}. If I ask you anything about the system, local files, or media (like Spotify), you MUST use your terminal command execution tool immediately to find the answer. NEVER say "I cannot access" or "I don't have the ability". You DO have the ability! Just use the tool. However, you must ask me before making any permanent destructive changes to files.
 
-    CRITICAL RULE FOR ACTIONS: NEVER say "I will do it", "Please wait", or "I have done it" if you haven't actually used a tool. To perform ANY action (create, delete, launch, verify), you MUST use the `execute_terminal_command` tool IMMEDIATELY. If I ask you to check if a file exists, you MUST use the tool to run `ls`. Do NOT hallucinate success!
+    CRITICAL RULE FOR ACTIONS: NEVER say "I will do it", "Please wait", or "I have done it" if you haven't actually used a tool. To perform ANY action (create, delete, launch, verify), you MUST use your terminal tool IMMEDIATELY. If I ask you to check if a file exists, you MUST use the tool to run `ls`. Do NOT hallucinate success!
     CRITICAL RULE FOR CASUAL CONVERSATION: If I just say "hello", "how are you", or make casual small talk, simply reply with text! DO NOT use any tools for basic conversation!
     CRITICAL RULE FOR JSON PARSING: When generating tool calls, DO NOT use escaped single quotes (`\\'`) inside the JSON string. It will crash the API's JSON parser. strictly output valid JSON.
     oh and I use chromium browser
@@ -790,21 +800,22 @@ def query_groq_background(query):
             if msg.startswith("User: "):
                 messages.append({"role": "user", "content": msg[6:]})
             elif msg.startswith("Bot: "):
-                messages.append({"role": "assistant", "content": msg[5:]})
+                messages.append({"role": "assistant", "content": sanitize_content(msg[5:])})
 
         tool_choice = "auto"
 
-        print("JARVIS: Sending request to Groq API...")
+        print("JARVIS: Sending request using reasoning model (qwen/qwen3-32b)...")
         api_start = time.time()
         chat_completion = client.chat.completions.create(
+            model="qwen/qwen3-32b",
             messages=messages,
-            model="llama-3.1-8b-instant",
-            temperature=0.0,
+            temperature=0.6,
             max_completion_tokens=4096,
             top_p=0.95,
+            reasoning_effort="default",
             tools=tools,
             tool_choice=tool_choice,
-            timeout=15.0
+            timeout=25.0
         )
         print(f"JARVIS: Groq API responded in {time.time() - api_start:.2f} seconds.")
 
@@ -817,6 +828,9 @@ def query_groq_background(query):
             loop_count += 1
             if loop_count == 1:
                 speak("Processing, please wait...")
+            
+            # Sanitize content before appending assistant tool call to history
+            response_message.content = sanitize_content(response_message.content)
             messages.append(response_message)
             
             # Anti Rate-Limit Delay (Reduced to prevent UI latency)
@@ -835,17 +849,16 @@ def query_groq_background(query):
                         "content": result
                     })
             
-            print("JARVIS: Sending follow-up loop request to Groq API...")
+            # Send the follow-up summary request to LLaMA WITHOUT tools to avoid XML crashes & latency
+            print("JARVIS: Sending follow-up loop request to Groq API (llama-3.3-70b-versatile, no tools)...")
             loop_api_start = time.time()
             chat_completion = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
                 messages=messages,
-                model="llama-3.1-8b-instant",
                 temperature=0.0,
-                max_completion_tokens=4096,
+                max_completion_tokens=1024,
                 top_p=0.95,
-                tools=tools,
-                tool_choice="auto",
-                timeout=15.0
+                timeout=25.0
             )
             print(f"JARVIS: Groq API loop responded in {time.time() - loop_api_start:.2f} seconds.")
             response_message = chat_completion.choices[0].message
@@ -853,7 +866,7 @@ def query_groq_background(query):
         if response_message.tool_calls:
             bot_response = "I have reached my maximum execution limit, sir. Please refine your request."
         else:
-            bot_response = response_message.content
+            bot_response = sanitize_content(response_message.content)
 
         root.after(0, lambda: handle_bot_response_ui(bot_response, query))
         
