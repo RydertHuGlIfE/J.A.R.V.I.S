@@ -764,11 +764,16 @@ def query_groq_background(query):
             if not txt:
                 return ""
             import re
-            # Remove <function...> tags
-            txt = re.sub(r'<function.*?>', '', txt)
-            # Remove {"command": ...} structures
-            txt = re.sub(r'\{"command"\s*:\s*.*\}', '', txt)
+            # Remove opening and closing <function...> / </function> tags (handling newlines)
+            txt = re.sub(r'</?function.*?>', '', txt, flags=re.DOTALL)
+            # Remove {"command": ...} structures (non-greedy, handling newlines)
+            txt = re.sub(r'\{"command"\s*:\s*.*?\}', '', txt, flags=re.DOTALL)
             return txt.strip()
+
+        today_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        user_home = os.environ.get("USER_HOME", os.path.expanduser("~"))
+        secondary_drive = os.environ.get("SECONDARY_DRIVE", "/run/media/Ryder/Coding")
+        windows_drive = os.environ.get("WINDOWS_DRIVE", "/run/media/Ryder/OS/")
 
         # Sanitize system prompt and build history
         system_prompt = f"""
@@ -776,14 +781,28 @@ def query_groq_background(query):
     Whether I speak in English or Hindi, you must respond in English. DO not put asterisk in your responses like *word* or *phrase*
     Today's date and time is: {today_str}. If I ask you anything about the system, local files, or media (like Spotify), you MUST use your terminal command execution tool immediately to find the answer. NEVER say "I cannot access" or "I don't have the ability". You DO have the ability! Just use the tool. However, you must ask me before making any permanent destructive changes to files.
 
-    CRITICAL RULE FOR ACTIONS: NEVER say "I will do it", "Please wait", or "I have done it" if you haven't actually used a tool. To perform ANY action (create, delete, launch, verify), you MUST use your terminal tool IMMEDIATELY. If I ask you to check if a file exists, you MUST use the tool to run `ls`. Do NOT hallucinate success!
+    Your absolute home directory is '{user_home}'. Standard folders are located here: 
+    - Downloads: '{user_home}/Downloads'
+    - Documents: '{user_home}/Documents'
+    - Desktop: '{user_home}/Desktop'
+    - Music: '{user_home}/Music'
+    - Pictures: '{user_home}/Pictures'
+    - Videos: '{user_home}/Videos'
+    
+    Secondary/extra drive paths available on the system:
+    - Coding/Projects Drive: '{secondary_drive}'
+    - Windows OS Drive (dual-boot mount): '{windows_drive}'
+    
+    Always prefix home-directory files with '{user_home}'. NEVER guess or omit the home folder prefix (do not use /home/Downloads/note.txt, use {user_home}/Downloads/note.txt instead). Always use the correct drive path when searching, listing, or modifying files across dual-booted OS structures or secondary storage partitions.
+
+    CRITICAL RULE FOR ACTIONS: Use the terminal command tool immediately without notifying me, explaining what you will do, or asking for permission first, unless the command is critical or destructive. Do not output any conversational prefix (like "I will run...", "I will check...") before executing the tool; just execute the tool immediately.
     CRITICAL RULE FOR CASUAL CONVERSATION: If I just say "hello", "how are you", or make casual small talk, simply reply with text! DO NOT use any tools for basic conversation!
     CRITICAL RULE FOR JSON PARSING: When generating tool calls, DO NOT use escaped single quotes (`\\'`) inside the JSON string. It will crash the API's JSON parser. strictly output valid JSON.
     oh and I use chromium browser
     CRITICAL RULES FOR TERMINAL TOOL:
     1. You do NOT have a persistent terminal. The 'cd' command does not work. You MUST use absolute paths (e.g., `ls -la /absolute/path`) to read directories. NEVER guess or hallucinate files!
     2. FOR TERMINAL APPS (TUI): If you need to open an interactive terminal app like `nano`, `nvim`, or `htop`, you MUST launch it inside the Kitty terminal emulator (e.g., `kitty nvim <file>`).
-    3. NEVER use `sudo`. It will freeze the script waiting for a terminal password. If you MUST run a command as root, use `pkexec <command>` instead, which securely prompts the user with a graphical GUI password dialog.
+    3. NEVER use raw `sudo` or `pkexec` directly in the background as they will freeze or fail. If you MUST run a command requiring root privileges, launch it inside a new Kitty terminal window using sudo (e.g., `kitty sh -c "sudo <command>; read"`) so the user can authenticate and see the output.
     4. FOR MEDIA CONTROL: To pause/play, use `playerctl play-pause`. To skip, use `playerctl next` or `playerctl previous`. 
     5. TO PLAY A SPECIFIC NEW SONG: Launch it directly if possible via command line or xdg-open.
 
@@ -821,6 +840,33 @@ def query_groq_background(query):
 
         response_message = chat_completion.choices[0].message
 
+        # Parse XML-style tool calls from text content (using re.DOTALL to support newlines)
+        import re
+        xml_tool_match = re.search(r'<function=execute_terminal_command>(.*?)(?:</function>|$)', response_message.content or "", re.DOTALL)
+        if xml_tool_match and not response_message.tool_calls:
+            try:
+                cmd_json = xml_tool_match.group(1).strip()
+                arguments_dict = json.loads(cmd_json)
+                
+                class MockFunction:
+                    def __init__(self, name, arguments):
+                        self.name = name
+                        self.arguments = json.dumps(arguments)
+                        
+                class MockToolCall:
+                    def __init__(self, id, fn):
+                        self.id = id
+                        self.type = "function"
+                        self.function = fn
+                
+                response_message.tool_calls = [MockToolCall(
+                    id="mock_xml_call_" + str(int(time.time())),
+                    fn=MockFunction("execute_terminal_command", arguments_dict)
+                )]
+                print("JARVIS: Successfully parsed XML-style tool call from text content.")
+            except Exception as parse_err:
+                print(f"JARVIS: Failed to parse XML tool call JSON: {parse_err}")
+
         loop_count = 0
         max_loops = 6
 
@@ -829,9 +875,24 @@ def query_groq_background(query):
             if loop_count == 1:
                 speak("Processing, please wait...")
             
-            # Sanitize content before appending assistant tool call to history
-            response_message.content = sanitize_content(response_message.content)
-            messages.append(response_message)
+            # Convert to a clean dict to strip Groq/Qwen-specific reasoning fields
+            msg_dict = {
+                "role": "assistant",
+                "content": sanitize_content(response_message.content)
+            }
+            if response_message.tool_calls:
+                msg_dict["tool_calls"] = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments
+                        }
+                    }
+                    for tc in response_message.tool_calls
+                ]
+            messages.append(msg_dict)
             
             # Anti Rate-Limit Delay (Reduced to prevent UI latency)
             time.sleep(0.2)
