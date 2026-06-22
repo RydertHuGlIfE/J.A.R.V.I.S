@@ -257,13 +257,7 @@ def execute_terminal_command(command):
             
         output = output.strip()
         error = error.strip()
-        
-        # Protect LLM from massive text dumps that crash the token limit
-        if len(output) > 800:
-            output = output[:800] + "\n...[OUTPUT TRUNCATED TO 800 CHARS]..."
-        if len(error) > 800:
-            error = error[:800] + "\n...[ERROR TRUNCATED TO 800 CHARS]..."
-        
+
         response = ""
         if output:
             response += f"Output:\n{output}\n"
@@ -764,10 +758,10 @@ def query_groq_background(query):
             if not txt:
                 return ""
             import re
-            # Remove opening and closing <function...> / </function> tags (handling newlines)
-            txt = re.sub(r'</?function.*?>', '', txt, flags=re.DOTALL)
-            # Remove {"command": ...} structures (non-greedy, handling newlines)
-            txt = re.sub(r'\{"command"\s*:\s*.*?\}', '', txt, flags=re.DOTALL)
+            # Strip ANY xml-like tags (e.g. <tool_call>, </tool_call>, <function>, etc)
+            txt = re.sub(r'<[^>]+>', '', txt)
+            # Strip any JSON block containing command
+            txt = re.sub(r'\{[\s\S]*?"command"[\s\S]*?\}', '', txt)
             return txt.strip()
 
         today_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -823,49 +817,51 @@ def query_groq_background(query):
 
         tool_choice = "auto"
 
-        print("JARVIS: Sending request using reasoning model (qwen/qwen3-32b)...")
+        print("JARVIS: Sending request using fast model (llama-3.3-70b-versatile)...")
         api_start = time.time()
         chat_completion = client.chat.completions.create(
-            model="qwen/qwen3-32b",
+            model="llama-3.3-70b-versatile",
             messages=messages,
-            temperature=0.6,
-            max_completion_tokens=4096,
+            temperature=0.0,
+            max_completion_tokens=1024,
             top_p=0.95,
-            reasoning_effort="default",
             tools=tools,
             tool_choice=tool_choice,
-            timeout=25.0
+            timeout=10.0
         )
         print(f"JARVIS: Groq API responded in {time.time() - api_start:.2f} seconds.")
 
         response_message = chat_completion.choices[0].message
 
-        # Parse XML-style tool calls from text content (using re.DOTALL to support newlines)
+        # Parse hallucinated tool calls from text content via Omni-Parser
         import re
-        xml_tool_match = re.search(r'<function=execute_terminal_command>(.*?)(?:</function>|$)', response_message.content or "", re.DOTALL)
-        if xml_tool_match and not response_message.tool_calls:
-            try:
-                cmd_json = xml_tool_match.group(1).strip()
-                arguments_dict = json.loads(cmd_json)
-                
-                class MockFunction:
-                    def __init__(self, name, arguments):
-                        self.name = name
-                        self.arguments = json.dumps(arguments)
+        if not response_message.tool_calls and response_message.content:
+            json_match = re.search(r'\{[\s\S]*?"command"[\s\S]*?\}', response_message.content)
+            if json_match:
+                try:
+                    cmd_json_str = json_match.group(0)
+                    parsed_data = json.loads(cmd_json_str)
+                    arguments_dict = parsed_data.get("arguments", parsed_data)
+                    
+                    if "command" in arguments_dict:
+                        class MockFunction:
+                            def __init__(self, name, arguments):
+                                self.name = name
+                                self.arguments = json.dumps(arguments)
+                                
+                        class MockToolCall:
+                            def __init__(self, id, fn):
+                                self.id = id
+                                self.type = "function"
+                                self.function = fn
                         
-                class MockToolCall:
-                    def __init__(self, id, fn):
-                        self.id = id
-                        self.type = "function"
-                        self.function = fn
-                
-                response_message.tool_calls = [MockToolCall(
-                    id="mock_xml_call_" + str(int(time.time())),
-                    fn=MockFunction("execute_terminal_command", arguments_dict)
-                )]
-                print("JARVIS: Successfully parsed XML-style tool call from text content.")
-            except Exception as parse_err:
-                print(f"JARVIS: Failed to parse XML tool call JSON: {parse_err}")
+                        response_message.tool_calls = [MockToolCall(
+                            id="mock_xml_call_" + str(int(time.time())),
+                            fn=MockFunction("execute_terminal_command", arguments_dict)
+                        )]
+                        print("JARVIS: Successfully extracted hallucinated JSON tool call.")
+                except Exception as parse_err:
+                    print(f"JARVIS: Failed to parse hallucinated JSON: {parse_err}")
 
         loop_count = 0
         max_loops = 6
