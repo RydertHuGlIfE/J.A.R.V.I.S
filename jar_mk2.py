@@ -795,7 +795,7 @@ def query_groq_background(query):
     oh and I use chromium browser
     CRITICAL RULES FOR TERMINAL TOOL:
     1. You do NOT have a persistent terminal. The 'cd' command does not work. You MUST use absolute paths (e.g., `ls -la /absolute/path`) to read directories. NEVER guess or hallucinate files!
-    2. FOR TERMINAL APPS (TUI): If you need to open an interactive terminal app like `nano`, `nvim`, or `htop`, you MUST launch it inside the Kitty terminal emulator (e.g., `kitty nvim <file>`).
+    2. FOR TERMINAL APPS (TUI): If you need to open an interactive terminal app that requires user input/viewing (like `nano`, `nvim`, or `htop`), you MUST launch it inside the Kitty terminal emulator (e.g., `kitty htop`). For normal CLI/background commands (like `ls`, `grep`, `cat`, `playerctl`, `curl`, etc.), NEVER prepend `kitty`; run them normally in the background.
     3. NEVER use raw `sudo` or `pkexec` directly in the background as they will freeze or fail. If you MUST run a command requiring root privileges, launch it inside a new Kitty terminal window using sudo (e.g., `kitty sh -c "sudo <command>; read"`) so the user can authenticate and see the output.
     4. FOR MEDIA CONTROL: To pause/play, use `playerctl play-pause`. To skip, use `playerctl next` or `playerctl previous`. 
     5. TO PLAY A SPECIFIC NEW SONG: Launch it directly if possible via command line or xdg-open.
