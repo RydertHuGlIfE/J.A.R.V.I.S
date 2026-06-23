@@ -849,15 +849,9 @@ def query_groq_background(query):
     CRITICAL RULES FOR TERMINAL TOOL:
     1. You do NOT have a persistent terminal. The 'cd' command does not work. You MUST use absolute paths (e.g., `ls -la /absolute/path`) to read directories. NEVER guess or hallucinate files!
     2. FOR TERMINAL APPS (TUI): If you need to open an interactive terminal app that requires user input/viewing (like `nano`, `nvim`, or `htop`), you MUST launch it inside the Kitty terminal emulator (e.g., `kitty htop`). For normal CLI/background commands (like `ls`, `grep`, `cat`, `playerctl`, `curl`, etc.), NEVER prepend `kitty`; run them normally in the background.
-    3. NEVER use raw `sudo` or `pkexec` directly in the background as they will freeze or fail. If you MUST run a command requiring root privileges, launch it inside a new Kitty terminal window using sudo (e.g., `kitty sh -c "sudo <command>; read"`) so the user can authenticate and see the output.
-    4. FOR MEDIA CONTROL: To pause/play, use `playerctl play-pause`. To skip, use `playerctl next` or `playerctl previous`. 
-    5. TO PLAY A SPECIFIC NEW SONG: Launch it directly if possible via command line or xdg-open.
-
-    You were trained in 2024, so any data after that or Any realtime knowledge that can be changed anytime you need to check, how do u check 
-    well in this same file there is a function named `google_res` that can be used to check realtime information.
-
-    CRITICAL NO-SEARCH RULE:
-    You DO NOT have access to the internet or web search tools. If the user asks for real-time information or events beyond your knowledge cutoff (2024), politely state that you do not have internet/search capabilities.
+    3. NEVER use raw `sudo` or `pkexec` directly in the background as they will freeze or fail. If you MUST run a command requiring root privileges, launch it inside a new Kitty terminal window using sudo (e.g., `kitty sh -c "sudo <command>; read"`).
+    
+    You were trained in 2024, so any data after that or any real-time knowledge that can be changed anytime, you must check using the `google_res` tool.
     
     Do not put your thoughts into responses just give the responses don't describe how you process anything. Do not use your think </think> thing, just give the response. DO NOT USE THE THINK TAG AT ALL.
     Your responses should be very short and concise, about 2-3 lines unless asked for a longer response.
@@ -883,7 +877,7 @@ def query_groq_background(query):
             top_p=0.95,
             tools=tools,
             tool_choice=tool_choice,
-            timeout=10.0
+            timeout=15.0
         )
         print(f"JARVIS: Groq API responded in {time.time() - api_start:.2f} seconds.")
 
