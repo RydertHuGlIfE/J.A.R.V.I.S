@@ -250,8 +250,11 @@ def execute_terminal_command(command):
         process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         
         try:
-            # Wait 1.8 seconds for fast commands
-            output, error = process.communicate(timeout=1.8)
+            # Wait 8.0 seconds for search/web/python commands, and 1.8 seconds for others
+            timeout_val = 1.8
+            if any(x in command for x in ["googletool.py", "curl", "wget", "python"]):
+                timeout_val = 8.0
+            output, error = process.communicate(timeout=timeout_val)
         except subprocess.TimeoutExpired:
             # DO NOT kill the process. Let GUI apps (like Kitty) keep running in the background!
             return f"Command '{command}' launched successfully and is running in the background."
@@ -851,7 +854,7 @@ def query_groq_background(query):
     2. FOR TERMINAL APPS (TUI): If you need to open an interactive terminal app that requires user input/viewing (like `nano`, `nvim`, or `htop`), you MUST launch it inside the Kitty terminal emulator (e.g., `kitty htop`). For normal CLI/background commands (like `ls`, `grep`, `cat`, `playerctl`, `curl`, etc.), NEVER prepend `kitty`; run them normally in the background.
     3. NEVER use raw `sudo` or `pkexec` directly in the background as they will freeze or fail. If you MUST run a command requiring root privileges, launch it inside a new Kitty terminal window using sudo (e.g., `kitty sh -c "sudo <command>; read"`).
     
-    You were trained in 2024, so any data after that or any real-time knowledge that can be changed anytime, you must check using the `google_res` tool.
+    You were trained in 2024, so if you need to find real-time info, web search, or check current events, run the terminal command: /run/media/Ryder/Coding/Coding/JARVIS/venv/bin/python3 /run/media/Ryder/Coding/Coding/JARVIS/googletool.py "<query>". IMPORTANT: Today's date is {today_str}. Always include the current year/date (e.g., '2026') in the search query where relevant to guarantee retrieval of current information!
     
     Do not put your thoughts into responses just give the responses don't describe how you process anything. Do not use your think </think> thing, just give the response. DO NOT USE THE THINK TAG AT ALL.
     Your responses should be very short and concise, about 2-3 lines unless asked for a longer response.
@@ -949,6 +952,7 @@ def query_groq_background(query):
                     cmd = arguments.get("command", "")
                     print(f"JARVIS: Executing system command: '{cmd}'")
                     result = execute_terminal_command(cmd)
+                    print(f"JARVIS: Command output:\n{result}")
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call.id,
@@ -966,6 +970,7 @@ def query_groq_background(query):
                         "name": "scan_directory",
                         "content": result
                     })
+
             
             # Send the follow-up summary request to LLaMA WITHOUT tools to avoid XML crashes & latency
             print("JARVIS: Sending follow-up loop request to Groq API (llama-3.3-70b-versatile, no tools)...")
