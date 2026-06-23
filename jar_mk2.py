@@ -6,6 +6,7 @@ import json
 import requests
 from bs4 import BeautifulSoup
 import urllib.parse
+from googletool import google_res
 import subprocess
 import re
 
@@ -271,6 +272,41 @@ def execute_terminal_command(command):
         
     except Exception as e:
         return f"Failed to execute Python subprocess: {str(e)}"
+
+def scan_directory(path):
+    import os
+    if not os.path.exists(path):
+        return f"Error: Path '{path}' does not exist."
+    if not os.path.isdir(path):
+        return f"Error: Path '{path}' is not a directory."
+        
+    ignore_dirs = {'.git', 'venv', '__pycache__', 'node_modules', '.idea', '.vscode', '.lapce', '.ropeproject'}
+    ignore_files = {'.DS_Store', 'thumbs.db'}
+    
+    result = []
+    for root_dir, dirs, files in os.walk(path):
+        # Exclude ignored directories in-place so walk doesn't visit them
+        dirs[:] = [d for d in dirs if d not in ignore_dirs]
+        
+        rel_path = os.path.relpath(root_dir, path)
+        if rel_path == '.':
+            level = 0
+            result.append(f"Directory Structure for: {path}\n")
+        else:
+            level = rel_path.count(os.sep) + 1
+            indent = "  " * level
+            result.append(f"{indent}📁 {os.path.basename(root_dir)}/\n")
+            
+        indent_files = "  " * (level + 1)
+        for f in files:
+            if f not in ignore_files:
+                result.append(f"{indent_files}📄 {f}\n")
+                
+    output = "".join(result)
+    # Truncate to keep context window safe
+    if len(output) > 2500:
+        return output[:2500] + "\n...[TRUNCATED due to size limit]..."
+    return output
 
 def take_screenshot(filename="screenshot.png"):
     if os.environ.get("WAYLAND_DISPLAY"):
@@ -749,6 +785,23 @@ def query_groq_background(query):
                         "required": ["command"]
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "scan_directory",
+                    "description": "Recursively scan a directory path to get its files and subfolder tree structures. Highly efficient and safe, automatically ignoring heavy folders like .git, venv, and node_modules.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": "The absolute path of the directory to scan"
+                            }
+                        },
+                        "required": ["path"]
+                    }
+                }
             }
         ]
         
@@ -799,6 +852,9 @@ def query_groq_background(query):
     3. NEVER use raw `sudo` or `pkexec` directly in the background as they will freeze or fail. If you MUST run a command requiring root privileges, launch it inside a new Kitty terminal window using sudo (e.g., `kitty sh -c "sudo <command>; read"`) so the user can authenticate and see the output.
     4. FOR MEDIA CONTROL: To pause/play, use `playerctl play-pause`. To skip, use `playerctl next` or `playerctl previous`. 
     5. TO PLAY A SPECIFIC NEW SONG: Launch it directly if possible via command line or xdg-open.
+
+    You were trained in 2024, so any data after that or Any realtime knowledge that can be changed anytime you need to check, how do u check 
+    well in this same file there is a function named `google_res` that can be used to check realtime information.
 
     CRITICAL NO-SEARCH RULE:
     You DO NOT have access to the internet or web search tools. If the user asks for real-time information or events beyond your knowledge cutoff (2024), politely state that you do not have internet/search capabilities.
@@ -903,6 +959,17 @@ def query_groq_background(query):
                         "role": "tool",
                         "tool_call_id": tool_call.id,
                         "name": "execute_terminal_command",
+                        "content": result
+                    })
+                elif tool_call.function.name == "scan_directory":
+                    arguments = json.loads(tool_call.function.arguments)
+                    dir_path = arguments.get("path", "")
+                    print(f"JARVIS: Scanning directory: '{dir_path}'")
+                    result = scan_directory(dir_path)
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "name": "scan_directory",
                         "content": result
                     })
             
