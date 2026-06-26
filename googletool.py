@@ -2,6 +2,90 @@ import os
 import requests
 from bs4 import BeautifulSoup
 
+import urllib.parse
+
+def decode_yahoo_url(url):
+    if not url:
+        return ""
+    if "RU=" in url:
+        try:
+            parts = url.split("RU=")
+            real_url = parts[1].split("/RK=")[0]
+            return urllib.parse.unquote(real_url)
+        except Exception:
+            pass
+    return url
+
+def extract_ticker(url):
+    # Google Finance format: https://www.google.com/finance/quote/IDEA:NSE
+    if "google.com/finance" in url:
+        try:
+            parts = url.split("/quote/")
+            if len(parts) > 1:
+                ticker_exchange = parts[1].split("?")[0].split("/")[0]
+                if ":" in ticker_exchange:
+                    ticker, exchange = ticker_exchange.split(":")
+                    if exchange == "NSE":
+                        return f"{ticker}.NS"
+                    elif exchange == "BSE":
+                        return f"{ticker}.BO"
+                    elif exchange == "LON":
+                        return f"{ticker}.L"
+                    elif exchange in ["NASDAQ", "NYSE"]:
+                        return ticker
+                    return ticker
+        except Exception:
+            pass
+    # Yahoo Finance format: https://finance.yahoo.com/quote/IDEA.NS
+    elif "finance.yahoo.com/quote/" in url:
+        try:
+            parts = url.split("/quote/")
+            if len(parts) > 1:
+                return parts[1].split("?")[0].split("/")[0]
+        except Exception:
+            pass
+    return None
+
+def fetch_live_yahoo_price(ticker):
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    }
+    try:
+        r = requests.get(url, headers=headers, timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            meta = data.get("chart", {}).get("result", [{}])[0].get("meta", {})
+            price = meta.get("regularMarketPrice")
+            prev_close = meta.get("chartPreviousClose")
+            currency = meta.get("currency", "")
+            symbol = meta.get("symbol", ticker)
+            
+            if price is not None:
+                change_str = ""
+                if prev_close is not None and prev_close != 0:
+                    change = price - prev_close
+                    pct = (change / prev_close) * 100
+                    sign = "+" if change >= 0 else ""
+                    change_str = f" ({sign}{change:.2f}, {sign}{pct:.2f}%)"
+                
+                currency_symbol = currency
+                if currency == "INR":
+                    currency_symbol = "₹"
+                elif currency == "USD":
+                    currency_symbol = "$"
+                elif currency == "GBp":
+                    currency_symbol = "GBX"
+                    
+                return {
+                    "title": f"LIVE: {symbol} Stock Price (Real-Time)",
+                    "url": f"https://finance.yahoo.com/quote/{symbol}",
+                    "description": f"Current Real-Time Price: {currency_symbol}{price}{change_str} as of today. (Direct API Quote)"
+                }
+    except Exception as e:
+        pass
+    return None
+
 def google_res(query):
     # Primary search: Yahoo (does not require Captcha verification)
     yahoo_url = "https://search.yahoo.com/search"
@@ -16,6 +100,10 @@ def google_res(query):
             soup = BeautifulSoup(response.text, "html.parser")
             unique_results = []
             divs = soup.find_all("div", class_="algo")
+            
+            # Check for live stock price tickers first
+            live_quotes = []
+            
             for div in divs:
                 # Find the main result link (usually the first anchor tag)
                 link = div.find("a")
@@ -26,19 +114,33 @@ def google_res(query):
                     href = link.get("href")
                     desc = desc_div.get_text(strip=True) if desc_div else ""
                     
+                    clean_href = decode_yahoo_url(href)
+                    ticker = extract_ticker(clean_href)
+                    
+                    # If this is a stock url, fetch live quote
+                    if ticker:
+                        live_quote = fetch_live_yahoo_price(ticker)
+                        if live_quote and live_quote["url"] not in [q["url"] for q in live_quotes]:
+                            live_quotes.append(live_quote)
+                    
                     # Ignore internal Yahoo links
                     if href and not href.startswith("https://r.search.yahoo.com/_ylt=") and not href.startswith("http://r.search.yahoo.com/"):
                         unique_results.append({
                             "title": title,
-                            "url": href,
+                            "url": clean_href,
                             "description": desc
                         })
                     elif href:
                         unique_results.append({
                             "title": title,
-                            "url": href,
+                            "url": clean_href,
                             "description": desc
                         })
+            
+            # Prepend live stock quotes to search results
+            if live_quotes:
+                unique_results = live_quotes + unique_results
+                
             if unique_results:
                 return unique_results[:15]
     except Exception as e:
@@ -123,6 +225,7 @@ if __name__ == "__main__":
         raw_query = " ".join(sys.argv[1:])
         today_date = date.today().strftime("%B %d, %Y")
         query = f"{raw_query} {today_date}"
+        print(f"Actual Search Query: '{query}'")
         
         results = google_res(query)
         if not results:

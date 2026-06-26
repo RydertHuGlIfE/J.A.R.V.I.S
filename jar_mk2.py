@@ -250,14 +250,23 @@ def execute_terminal_command(command):
         process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         
         try:
-            # Wait 8.0 seconds for search/web/python commands, and 1.8 seconds for others
+            # Wait 15.0 seconds for search/web/python commands, and 1.8 seconds for others
             timeout_val = 1.8
             if any(x in command for x in ["googletool.py", "curl", "wget", "python"]):
-                timeout_val = 8.0
+                timeout_val = 15.0
             output, error = process.communicate(timeout=timeout_val)
         except subprocess.TimeoutExpired:
-            # DO NOT kill the process. Let GUI apps (like Kitty) keep running in the background!
-            return f"Command '{command}' launched successfully and is running in the background."
+            # If it's a CLI tool, terminate it and return a timeout error
+            if not command.strip().startswith("kitty") and any(x in command for x in ["googletool.py", "curl", "wget", "python"]):
+                process.terminate()
+                try:
+                    process.wait(timeout=1.0)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                return f"Error: Command '{command}' timed out after {timeout_val} seconds."
+            else:
+                # Let GUI apps (like Kitty) keep running in the background!
+                return f"Command '{command}' launched successfully and is running in the background."
             
         output = output.strip()
         error = error.strip()
@@ -854,11 +863,12 @@ def query_groq_background(query):
     2. FOR TERMINAL APPS (TUI): If you need to open an interactive terminal app that requires user input/viewing (like `nano`, `nvim`, or `htop`), you MUST launch it inside the Kitty terminal emulator (e.g., `kitty btop`). For normal CLI/background commands (like `ls`, `grep`, `cat`, `playerctl`, `curl`, etc.), NEVER prepend `kitty`; run them normally in the background.
     3. NEVER use raw `sudo` or `pkexec` directly in the background as they will freeze or fail. If you MUST run a command requiring root privileges, launch it inside a new Kitty terminal window using sudo (e.g., `kitty sh -c "sudo <command>; read"`).
     
-    You were trained in 2024. If you need to find real-time info, web search, or check current events, you MUST ONLY run the search command: /run/media/Ryder/Coding/Coding/JARVIS/venv/bin/python3 /run/media/Ryder/Coding/Coding/JARVIS/googletool.py "<query>".
+    You were trained in 2024. If you need to find real-time info, web search, or check current events, you MUST ONLY run the search command: /run/media/Ryder/Coding/Coding/JARVIS/venv/bin/python3 /run/media/Ryder/Coding/Coding/JARVIS/googletool.py '<query>'.
     CRITICAL SEARCH RULES:
     1. NEVER prepend `kitty` to the search command or run it in a GUI terminal; it must run silently in the background to return output.
     2. NEVER use raw `curl`, `wget`, or browser commands to scrape search engines directly; always use `googletool.py`.
-    3. Today's date is {today_str}. Always append the current year/date (e.g., '2026') to the query to ensure accurate current results.
+    3. ALWAYS wrap the search query argument in single quotes `'` (e.g. `googletool.py 'my query'`) instead of double quotes `"` to prevent JSON syntax errors in tool calls.
+    4. Today's date is {today_str}. Always append the current year/date (e.g., '2026') to the query to ensure accurate current results.
     
     Do not put your thoughts into responses just give the responses don't describe how you process anything. Do not use your think </think> thing, just give the response. DO NOT USE THE THINK TAG AT ALL.
     Your responses should be very short and concise, about 2-3 lines unless asked for a longer response.
