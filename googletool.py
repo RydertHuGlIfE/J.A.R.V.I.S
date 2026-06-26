@@ -116,10 +116,14 @@ def google_res(query):
         return []
 
 import sys
+from datetime import date
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
-        query = " ".join(sys.argv[1:])
+        raw_query = " ".join(sys.argv[1:])
+        today_date = date.today().strftime("%B %d, %Y")
+        query = f"{raw_query} {today_date}"
+        
         results = google_res(query)
         if not results:
             print("No results found or rate limited.")
