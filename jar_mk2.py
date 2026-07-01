@@ -3,10 +3,6 @@ from dotenv import load_dotenv
 import sys
 import os
 import json
-import requests
-from bs4 import BeautifulSoup
-import urllib.parse
-from googletool import google_res
 import subprocess
 import re
 
@@ -41,8 +37,6 @@ import pyperclip
 from PIL import ImageGrab
 import time
 from datetime import datetime
-from pathlib import Path
-import concurrent.futures
 
 
 
@@ -69,21 +63,7 @@ class SuppressStderr:
 
 def_mic_state =0
 
-# Global session for connection pooling
-scrape_session = requests.Session()
-scrape_session.headers.update({
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
-})
 
-def warmup_scraper():
-    """Silent request on boot to establish DNS and SSL instantly"""
-    try:
-        scrape_session.get("https://lite.duckduckgo.com/lite/", timeout=5.0)
-    except Exception:
-        pass
-
-# Start the connection warm-up in a background thread immediately
-threading.Thread(target=warmup_scraper, daemon=True).start()
 
 
 def get_clipboard():
@@ -97,136 +77,6 @@ def get_clipboard():
     except Exception:
         return ""
 
-
-#1st mcp for jarvis les gooooooooooooo
-
-import collections
-import concurrent.futures
-
-SEARCH_CACHE_MAX_SIZE = 200
-SEARCH_CACHE_TTL = 600  # seconds
-search_cache = collections.OrderedDict()  # replaces the plain dict
-
-def _cache_get(key):
-    entry = search_cache.get(key)
-    if not entry:
-        return None
-    ts, value = entry
-    if time.time() - ts > SEARCH_CACHE_TTL:
-        del search_cache[key]
-        return None
-    search_cache.move_to_end(key)
-    return value
-
-def _cache_set(key, value):
-    search_cache[key] = (time.time(), value)
-    search_cache.move_to_end(key)
-    while len(search_cache) > SEARCH_CACHE_MAX_SIZE:
-        search_cache.popitem(last=False)  # evict oldest
-
-def _clean_query(query):
-    junk = ["summarize", "bullet points", "bullet point", "in 5", "in 4", "in 3",
-            "in 2", "in 1", "lines", "line", "summary", "please", "write",
-            "give me", "list of", "list"]
-    cleaned = query.lower()
-    for term in junk:
-        # word-boundary replace, not substring replace — fixes old bug
-        cleaned = re.sub(rf"\b{re.escape(term)}\b", "", cleaned)
-    cleaned = " ".join(cleaned.split()).strip()
-    return cleaned or query.strip()
-
-def _parse_ddg_lite(html):
-    soup = BeautifulSoup(html, "html.parser")
-    results, rows = [], soup.find_all("tr")
-    for i, row in enumerate(rows):
-        link_tag = row.find("a", class_="result-link")
-        if not link_tag:
-            continue
-        title = link_tag.get_text(strip=True)
-        href = link_tag.get("href")
-        if href and "uddg=" in href:
-            parsed = urllib.parse.urlparse(href)
-            href = urllib.parse.parse_qs(parsed.query).get("uddg", [href])[0]
-        elif href and href.startswith("//"):
-            href = "https:" + href
-        snippet = ""
-        for offset in (1, 2):
-            if i + offset < len(rows):
-                snippet_td = rows[i + offset].find("td", class_="result-snippet")
-                if snippet_td:
-                    snippet = snippet_td.get_text(strip=True)
-                    break
-        results.append({"title": title, "url": href, "content": snippet[:600]})
-        if len(results) >= 5:
-            break
-    return results
-
-def _parse_ddg_html(html):
-    soup = BeautifulSoup(html, "html.parser")
-    results = []
-    for result in soup.select(".result")[:5]:
-        link_tag = result.select_one(".result__a")
-        if not link_tag:
-            continue
-        href = link_tag.get("href", "")
-        if "uddg=" in href:
-            parsed = urllib.parse.urlparse(href)
-            href = urllib.parse.parse_qs(parsed.query).get("uddg", [href])[0]
-        snippet_tag = result.select_one(".result__snippet")
-        snippet = snippet_tag.get_text(strip=True) if snippet_tag else ""
-        results.append({"title": link_tag.get_text(strip=True), "url": href, "content": snippet[:600]})
-    return results
-
-def _fetch_ddg_lite(query, timeout):
-    r = scrape_session.get("https://lite.duckduckgo.com/lite/", params={"q": query}, timeout=timeout)
-    r.raise_for_status()
-    return _parse_ddg_lite(r.text)
-
-def _fetch_ddg_html(query, timeout):
-    r = scrape_session.get("https://html.duckduckgo.com/html/", params={"q": query}, timeout=timeout)
-    r.raise_for_status()
-    return _parse_ddg_html(r.text)
-
-def search_google_duckduckgo(query):
-    clean_query = _clean_query(query)
-
-    cached = _cache_get(clean_query)
-    if cached is not None:
-        print(f"JARVIS: Search cache HIT for query: '{clean_query}'")
-        return cached
-
-    print(f"JARVIS: Searching for '{clean_query}'...")
-    start = time.time()
-
-    pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
-    futures = {
-        pool.submit(_fetch_ddg_lite, clean_query, 3.0): "lite",
-        pool.submit(_fetch_ddg_html, clean_query, 3.0): "html",
-    }
-
-    results, errors = None, []
-    try:
-        for future in concurrent.futures.as_completed(futures, timeout=3.5):
-            name = futures[future]
-            try:
-                data = future.result()
-                if data:
-                    results = data
-                    print(f"JARVIS: '{name}' won in {time.time() - start:.2f}s")
-                    break
-            except Exception as e:
-                errors.append(f"{name}: {e}")
-    except concurrent.futures.TimeoutError:
-        errors.append("both endpoints timed out")
-    finally:
-        pool.shutdown(wait=False)  # don't block on the loser
-
-    if results is None:
-        return f"Error: search unavailable right now ({'; '.join(errors) if errors else 'no results'})."
-
-    result_str = json.dumps(results)
-    _cache_set(clean_query, result_str)
-    return result_str
 
 def set_clipboard(text):
     if os.environ.get("WAYLAND_DISPLAY"):
@@ -252,12 +102,12 @@ def execute_terminal_command(command):
         try:
             # Wait 15.0 seconds for search/web/python commands, and 1.8 seconds for others
             timeout_val = 1.8
-            if any(x in command for x in ["googletool.py", "curl", "wget", "python"]):
+            if any(x in command for x in ["curl", "wget", "python"]):
                 timeout_val = 15.0
             output, error = process.communicate(timeout=timeout_val)
         except subprocess.TimeoutExpired:
             # If it's a CLI tool, terminate it and return a timeout error
-            if not command.strip().startswith("kitty") and any(x in command for x in ["googletool.py", "curl", "wget", "python"]):
+            if not command.strip().startswith("kitty") and any(x in command for x in ["curl", "wget", "python"]):
                 process.terminate()
                 try:
                     process.wait(timeout=1.0)
@@ -378,7 +228,65 @@ def press_hotkey(*keys):
         return False
 
 conversation_history = []
+last_70b_rate_limit_time = 0.0
+last_mixtral_rate_limit_time = 0.0
 recognizer = sr.Recognizer()
+
+def create_chat_completion_with_fallback(messages, tools=None, tool_choice=None, timeout=15.0):
+    global last_70b_rate_limit_time, last_mixtral_rate_limit_time
+    cooldown = 300.0
+    now = time.time()
+    
+    candidates = []
+    if (now - last_70b_rate_limit_time) >= cooldown:
+        candidates.append("llama-3.3-70b-versatile")
+    else:
+        print(f"JARVIS: Cooldown active for llama-3.3-70b-versatile (remaining: {int(cooldown - (now - last_70b_rate_limit_time))}s)")
+        
+    if (now - last_mixtral_rate_limit_time) >= cooldown:
+        candidates.append("mixtral-8x7b-32768")
+    else:
+        print(f"JARVIS: Cooldown active for mixtral-8x7b-32768 (remaining: {int(cooldown - (now - last_mixtral_rate_limit_time))}s)")
+        
+    candidates.append("llama-3.1-8b-instant")
+    
+    for i, model in enumerate(candidates):
+        print(f"JARVIS: Attempting request using model: {model}...")
+        api_start = time.time()
+        try:
+            params = {
+                "model": model,
+                "messages": messages,
+                "temperature": 0.0,
+                "max_completion_tokens": 1024,
+                "top_p": 0.95,
+                "timeout": timeout
+            }
+            if tools:
+                params["tools"] = tools
+                params["tool_choice"] = tool_choice
+                
+            completion = client.chat.completions.create(**params)
+            print(f"JARVIS: Groq API ({model}) responded successfully in {time.time() - api_start:.2f} seconds.")
+            return completion
+        except Exception as e:
+            err_str = str(e).lower()
+            is_rate_limit = "429" in err_str or "rate limit" in err_str or "limit reached" in err_str
+            is_bad_request = "400" in err_str or "validation failed" in err_str or "tool_use_failed" in err_str
+            
+            if is_rate_limit:
+                print(f"JARVIS: {model} rate limit hit! Marking cooldown.")
+                if model == "llama-3.3-70b-versatile":
+                    last_70b_rate_limit_time = now
+                elif model == "mixtral-8x7b-32768":
+                    last_mixtral_rate_limit_time = now
+            elif is_bad_request:
+                print(f"JARVIS: {model} bad request/validation error: {e}. Falling back.")
+            else:
+                print(f"JARVIS: {model} raised an unexpected error: {e}. Falling back.")
+                
+            if i == len(candidates) - 1:
+                raise e
 
 tts_engine = None
 try:
@@ -759,9 +667,9 @@ def handle_bot_response_ui(bot_response, query):
         bot_response = re.sub(r'<think>.*?</think>', '', bot_response, flags=re.DOTALL).strip()
         
         if not conversation_history or conversation_history[-1] != f"Bot: {bot_response}":
-            if len(conversation_history) >= 100:
-                del conversation_history[:1]
             conversation_history.append(f"Bot: {bot_response}")
+            if len(conversation_history) > 14:
+                del conversation_history[:-14]
         if "code" in query.lower() or "script" in query.lower():
             display_bot_response(bot_response, speak_text=False)
         else:
@@ -769,11 +677,15 @@ def handle_bot_response_ui(bot_response, query):
     else:
         bot_response = "Sorry, I couldn't generate a response. Please try again."
         conversation_history.append(f"Bot: {bot_response}")
+        if len(conversation_history) > 14:
+            del conversation_history[:-14]
         display_bot_response(bot_response)
 
 def handle_bot_error_ui(err_msg):
     hide_thinking_animation()
     conversation_history.append(f"Bot: {err_msg}")
+    if len(conversation_history) > 14:
+        del conversation_history[:-14]
     display_bot_response(err_msg)
 
 def query_groq_background(query):
@@ -863,13 +775,7 @@ def query_groq_background(query):
     2. FOR TERMINAL APPS (TUI): If you need to open an interactive terminal app that requires user input/viewing (like `nano`, `nvim`, or `htop`), you MUST launch it inside the Kitty terminal emulator (e.g., `kitty btop`). For normal CLI/background commands (like `ls`, `grep`, `cat`, `playerctl`, `curl`, etc.), NEVER prepend `kitty`; run them normally in the background.
     3. NEVER use raw `sudo` or `pkexec` directly in the background as they will freeze or fail. If you MUST run a command requiring root privileges, launch it inside a new Kitty terminal window using sudo (e.g., `kitty sh -c "sudo <command>; read"`).
     
-    You were trained in 2024. If you need to find real-time info, web search, or check current events, you MUST ONLY run the search command: /run/media/Ryder/Coding/Coding/JARVIS/venv/bin/python3 /run/media/Ryder/Coding/Coding/JARVIS/googletool.py '<query>'.
-    CRITICAL SEARCH RULES:
-    1. NEVER prepend `kitty` to the search command or run it in a GUI terminal; it must run silently in the background to return output.
-    2. NEVER use raw `curl`, `wget`, or browser commands to scrape search engines directly; always use `googletool.py`.
-    3. ALWAYS wrap the search query argument in single quotes `'` (e.g. `googletool.py 'my query'`) instead of double quotes `"` to prevent JSON syntax errors in tool calls.
-    4. Today's date is {today_str}. Always append the current year/date (e.g., '2026') to the query to ensure accurate current results.
-    
+
     Do not put your thoughts into responses just give the responses don't describe how you process anything. Do not use your think </think> thing, just give the response. DO NOT USE THE THINK TAG AT ALL.
     Your responses should be very short and concise, about 2-3 lines unless asked for a longer response.
     You should always call me 'sir'. Do not use three dots or ellipsis (...) in your responses, just use spaces instead! Do not use your name inside of the responses unless asked to do so.
@@ -884,19 +790,12 @@ def query_groq_background(query):
 
         tool_choice = "auto"
 
-        print("JARVIS: Sending request using fast model (llama-3.3-70b-versatile)...")
-        api_start = time.time()
-        chat_completion = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+        chat_completion = create_chat_completion_with_fallback(
             messages=messages,
-            temperature=0.0,
-            max_completion_tokens=1024,
-            top_p=0.95,
             tools=tools,
             tool_choice=tool_choice,
             timeout=15.0
         )
-        print(f"JARVIS: Groq API responded in {time.time() - api_start:.2f} seconds.")
 
         response_message = chat_completion.choices[0].message
 
@@ -987,17 +886,12 @@ def query_groq_background(query):
 
             
             # Send the follow-up summary request to LLaMA WITHOUT tools to avoid XML crashes & latency
-            print("JARVIS: Sending follow-up loop request to Groq API (llama-3.3-70b-versatile, no tools)...")
-            loop_api_start = time.time()
-            chat_completion = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+            chat_completion = create_chat_completion_with_fallback(
                 messages=messages,
-                temperature=0.0,
-                max_completion_tokens=1024,
-                top_p=0.95,
+                tools=None,
+                tool_choice=None,
                 timeout=25.0
             )
-            print(f"JARVIS: Groq API loop responded in {time.time() - loop_api_start:.2f} seconds.")
             response_message = chat_completion.choices[0].message
 
         if response_message.tool_calls:
@@ -1197,6 +1091,8 @@ def on_submit(query=None):
         return
     
     conversation_history.append(f"User: {query}")
+    if len(conversation_history) > 14:
+        del conversation_history[:-14]
     show_thinking_animation()
 
     threading.Thread(target=query_groq_background, args=(query,), daemon=True).start()
