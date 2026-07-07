@@ -777,7 +777,7 @@ def query_groq_background(query):
 
     Always prefix home-directory files with '{user_home}'. NEVER guess or omit the home folder prefix (do not use /home/Downloads/note.txt, use {user_home}/Downloads/note.txt instead). Always use the correct drive path when searching, listing, or modifying files across dual-booted OS structures or secondary storage partitions.
 
-    CRITICAL RULE FOR ACTIONS: Use the terminal command tool immediately without notifying me, explaining what you will do, or asking for permission first, unless the command is critical or destructive. Do not output any conversational prefix (like "I will run...", "I will check...") before executing the tool; just execute the tool immediately.
+    CRITICAL RULE FOR ACTIONS: Use the terminal command tool immediately without notifying me ONLY IF NEEDED, explaining what you will do, or asking for permission first, unless the command is critical or destructive. Do not output any conversational prefix (like "I will run...", "I will check...") before executing the tool; just execute the tool immediately.
     CRITICAL RULE FOR CASUAL CONVERSATION: If I just say "hello", "how are you", or make casual small talk, simply reply with text! DO NOT use any tools for basic conversation!
     CRITICAL RULE FOR JSON PARSING: When generating tool calls, DO NOT use escaped single quotes (`\\'`) inside the JSON string. It will crash the API's JSON parser. strictly output valid JSON.
     oh and I use chromium browser
