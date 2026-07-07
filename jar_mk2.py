@@ -426,7 +426,13 @@ threading.Thread(target=init_piper, daemon=True).start()
 def speak(text):
     import hashlib
     import wave
+    import re
     
+    # If the response is longer than 5 sentences, summarize it verbally
+    s_check = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
+    if len(s_check) > 5:
+        text = "Message too long. Check JARVIS interface, sir."
+        
     cache_dir = "/tmp/jarvis_voice_cache"
     try:
         os.makedirs(cache_dir, exist_ok=True)
@@ -764,6 +770,11 @@ def query_groq_background(query):
     - Coding/Projects Drive: '{secondary_drive}'
     - Windows OS Drive (dual-boot mount): '{windows_drive}'
     
+
+    Also If I ask you something like essay or any kind of long responses you just need to type it you dont need to open kitty or try to save it to a file unless asked to do so
+
+    For music and Songs my default player is Spotify so use playerctl with that unles told to do so...
+
     Always prefix home-directory files with '{user_home}'. NEVER guess or omit the home folder prefix (do not use /home/Downloads/note.txt, use {user_home}/Downloads/note.txt instead). Always use the correct drive path when searching, listing, or modifying files across dual-booted OS structures or secondary storage partitions.
 
     CRITICAL RULE FOR ACTIONS: Use the terminal command tool immediately without notifying me, explaining what you will do, or asking for permission first, unless the command is critical or destructive. Do not output any conversational prefix (like "I will run...", "I will check...") before executing the tool; just execute the tool immediately.
