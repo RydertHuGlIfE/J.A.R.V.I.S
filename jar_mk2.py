@@ -8,6 +8,7 @@ import re
 
 load_dotenv()
 
+
 # Create global Groq client to enable TCP connection pooling and Keep-Alive
 api_key = os.environ.get("GROQ_API_KEY", "")
 if not api_key:
@@ -61,9 +62,9 @@ class SuppressStderr:
                 pass
 
 
-def_mic_state =0
+def_mic_state = 0
 
-
+HISTORY_LOG = "history.json"
 
 
 def get_clipboard():
@@ -916,6 +917,9 @@ def query_groq_background(query):
         print(f"Error in background query: {str(e)}")
         err_msg = "An error occurred while processing your request."
         root.after(0, lambda: handle_bot_error_ui(err_msg))
+
+
+#getting jarvis to actually set history 
 
 def on_submit(query=None):
     if threading.current_thread() is not threading.main_thread():
