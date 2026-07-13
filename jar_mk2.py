@@ -229,6 +229,8 @@ def press_hotkey(*keys):
         return False
 
 conversation_history = []
+script_dir = os.path.dirname(os.path.abspath(__file__))
+log_file = os.environ.get("LOG_FILE", os.path.join(script_dir, "history.log"))
 last_70b_rate_limit_time = 0.0
 last_mixtral_rate_limit_time = 0.0
 recognizer = sr.Recognizer()
@@ -695,6 +697,17 @@ def handle_bot_error_ui(err_msg):
         del conversation_history[:-14]
     display_bot_response(err_msg)
 
+
+#getting jarvis to actually set history 
+def save_history():
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_line = f"[{timestamp}] {role.upper()}: {text}\n"
+    try:
+        with open(HISTORY_LOG, "a") as log:
+            log.write(log_line)
+    except Exception as e:
+        print(f"Error saving history: {e}")
+
 def query_groq_background(query):
     try:
         # Use global client to leverage connection pooling
@@ -750,8 +763,14 @@ def query_groq_background(query):
 
         today_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         user_home = os.environ.get("USER_HOME", os.path.expanduser("~"))
-        secondary_drive = os.environ.get("SECONDARY_DRIVE", "/run/media/Ryder/Coding")
-        windows_drive = os.environ.get("WINDOWS_DRIVE", "/run/media/Ryder/OS/")
+        secondary_drive = os.environ.get("SECONDARY_DRIVE", "")
+        windows_drive = os.environ.get("WINDOWS_DRIVE", "")
+
+        drive_info = ""
+        if secondary_drive:
+            drive_info += f"    - Coding/Projects Drive: '{secondary_drive}'\n"
+        if windows_drive:
+            drive_info += f"    - Windows OS Drive (dual-boot mount): '{windows_drive}'\n"
 
         # Sanitize system prompt and build history
         system_prompt = f"""
@@ -766,12 +785,12 @@ def query_groq_background(query):
     - Music: '{user_home}/Music'
     - Pictures: '{user_home}/Pictures'
     - Videos: '{user_home}/Videos'
-    
+    """
+        if drive_info:
+            system_prompt += f"""
     Secondary/extra drive paths available on the system:
-    - Coding/Projects Drive: '{secondary_drive}'
-    - Windows OS Drive (dual-boot mount): '{windows_drive}'
-    
-
+{drive_info}"""
+        system_prompt += f"""
     Also If I ask you something like essay or any kind of long responses you just need to type it you dont need to open kitty or try to save it to a file unless asked to do so
 
     For music and Songs my default player is Spotify so use playerctl with that unles told to do so...
@@ -787,6 +806,13 @@ def query_groq_background(query):
     2. FOR TERMINAL APPS (TUI): If you need to open an interactive terminal app that requires user input/viewing (like `nano`, `nvim`, or `htop`), you MUST launch it inside the Kitty terminal emulator (e.g., `kitty btop`). For normal CLI/background commands (like `ls`, `grep`, `cat`, `playerctl`, `curl`, etc.), NEVER prepend `kitty`; run them normally in the background.
     3. NEVER use raw `sudo` or `pkexec` directly in the background as they will freeze or fail. If you MUST run a command requiring root privileges, launch it inside a new Kitty terminal window using sudo (e.g., `kitty sh -c "sudo <command>; read"`).
     
+    HISTORICAL LOGS:
+    All past conversations are logged at '{log_file}'.
+    If the user asks about previous sessions, past commands, or what you talked about earlier:
+    Use 'execute_terminal_command' to run shell commands on the log file:
+    - Search: grep -i "term" {log_file}
+    - Recent context: tail -n 100 {log_file}
+    Analyze the command output to construct your response.
 
     Do not put your thoughts into responses just give the responses don't describe how you process anything. Do not use your think </think> thing, just give the response. DO NOT USE THE THINK TAG AT ALL.
     Your responses should be very short and concise, about 2-3 lines unless asked for a longer response.
@@ -896,12 +922,15 @@ def query_groq_background(query):
                         "content": result
                     })
 
-            
-            # Send the follow-up summary request to LLaMA WITHOUT tools to avoid XML crashes & latency
+            # Check if this is the last loop; if so, disable tools to force a final summary text
+            next_tools = None if (loop_count == max_loops - 1) else tools
+            next_tool_choice = None if (loop_count == max_loops - 1) else "auto"
+
+            # Send the follow-up request to the model
             chat_completion = create_chat_completion_with_fallback(
                 messages=messages,
-                tools=None,
-                tool_choice=None,
+                tools=next_tools,
+                tool_choice=next_tool_choice,
                 timeout=25.0
             )
             response_message = chat_completion.choices[0].message
@@ -919,7 +948,7 @@ def query_groq_background(query):
         root.after(0, lambda: handle_bot_error_ui(err_msg))
 
 
-#getting jarvis to actually set history 
+
 
 def on_submit(query=None):
     if threading.current_thread() is not threading.main_thread():
@@ -1145,12 +1174,22 @@ def append_to_conversation(speaker, text):
     if speaker == "You":
         conversation_text.insert(tk.END, f"\n{speaker}: ", "user_tag")
         conversation_text.insert(tk.END, f"{text}\n", "user_text")
+        role_label = "User"
     else:
         conversation_text.insert(tk.END, f"\n{speaker}: ", "bot_tag")
         conversation_text.insert(tk.END, f"{text}\n", "bot_text")
+        role_label = "JARVIS"
 
     conversation_text.config(state=tk.DISABLED)
     conversation_text.see(tk.END)
+
+    # Immediately write to the log file (Option B)
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(f"[{timestamp}] {role_label.upper()}: {text}\n")
+    except Exception as e:
+        print(f"Failed to log chat: {e}")
 
 def show_thinking_animation():
     conversation_text.config(state=tk.NORMAL)

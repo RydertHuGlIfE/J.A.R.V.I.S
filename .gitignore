@@ -10,6 +10,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 history.json
+history.log
 
 # Environment variables & secrets
 .env
