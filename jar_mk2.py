@@ -807,11 +807,12 @@ def query_groq_background(query):
     3. NEVER use raw `sudo` or `pkexec` directly in the background as they will freeze or fail. If you MUST run a command requiring root privileges, launch it inside a new Kitty terminal window using sudo (e.g., `kitty sh -c "sudo <command>; read"`).
     
     HISTORICAL LOGS:
-    All past conversations are logged at '{log_file}'.
-    If the user asks about previous sessions, past commands, or what you talked about earlier:
-    Use 'execute_terminal_command' to run shell commands on the log file:
-    - Search: grep -i "term" {log_file}
-    - Recent context: tail -n 100 {log_file}
+    All past conversations and executed commands are logged at '{log_file}'.
+    - CRITICAL: Never execute a raw 'cat' of the entire '{log_file}'. Reading the whole file is extremely slow and will consume too many tokens.
+    - To search past context, run a selective command like:
+      `grep -i "keyword" {log_file} | tail -n 25`
+    - To see recent conversation flow, retrieve only the tail end:
+      `tail -n 40 {log_file}`
     Analyze the command output to construct your response.
 
     Do not put your thoughts into responses just give the responses don't describe how you process anything. Do not use your think </think> thing, just give the response. DO NOT USE THE THINK TAG AT ALL.
@@ -910,6 +911,13 @@ def query_groq_background(query):
                         "name": "execute_terminal_command",
                         "content": result
                     })
+                    # Log the command execution to history.log
+                    timestamp_exec = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    try:
+                        with open(log_file, "a", encoding="utf-8") as f:
+                            f.write(f"[{timestamp_exec}] TOOL_EXECUTION: Executed command '{cmd}'\n")
+                    except Exception as e:
+                        print(f"Failed to log tool execution: {e}")
                 elif tool_call.function.name == "scan_directory":
                     arguments = json.loads(tool_call.function.arguments)
                     dir_path = arguments.get("path", "")
