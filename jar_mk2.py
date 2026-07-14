@@ -232,71 +232,78 @@ conversation_history = []
 script_dir = os.path.dirname(os.path.abspath(__file__))
 log_file = os.environ.get("LOG_FILE", os.path.join(script_dir, "history.log"))
 last_70b_rate_limit_time = 0.0
-last_mixtral_rate_limit_time = 0.0
 recognizer = sr.Recognizer()
 
 def create_chat_completion_with_fallback(messages, tools=None, tool_choice=None, timeout=15.0):
-    global last_70b_rate_limit_time, last_mixtral_rate_limit_time
+    global last_70b_rate_limit_time
     cooldown = 300.0
     now = time.time()
     
     candidates = []
     if (now - last_70b_rate_limit_time) >= cooldown:
         candidates.append("llama-3.3-70b-versatile")
-    else:
-        print(f"JARVIS: Cooldown active for llama-3.3-70b-versatile (remaining: {int(cooldown - (now - last_70b_rate_limit_time))}s)")
-        
-    if (now - last_mixtral_rate_limit_time) >= cooldown:
-        candidates.append("mixtral-8x7b-32768")
-    else:
-        print(f"JARVIS: Cooldown active for mixtral-8x7b-32768 (remaining: {int(cooldown - (now - last_mixtral_rate_limit_time))}s)")
-        
     candidates.append("llama-3.1-8b-instant")
+
+    success_event = threading.Event()
+    results = {}
+    errors = {}
+    lock = threading.Lock()
     
-    for i, model in enumerate(candidates):
-        print(f"JARVIS: Attempting request using model: {model}...")
-        api_start = time.time()
+    def query_single_model(model_name):
         try:
             params = {
-                "model": model,
+                "model": model_name, 
                 "messages": messages,
-                "temperature": 0.0,
+                "temperature": 0.0, 
                 "max_completion_tokens": 1024,
                 "top_p": 0.95,
                 "timeout": timeout
             }
+
             if tools:
                 params["tools"] = tools
                 params["tool_choice"] = tool_choice
-                
-            completion = client.chat.completions.create(**params)
-            print(f"JARVIS: Groq API ({model}) responded successfully in {time.time() - api_start:.2f} seconds.")
-            return completion
-        except Exception as e:
-            err_str = str(e).lower()
-            is_rate_limit = "429" in err_str or "rate limit" in err_str or "limit reached" in err_str
-            is_bad_request = "400" in err_str or "validation failed" in err_str or "tool_use_failed" in err_str
             
-            if is_rate_limit:
-                print(f"JARVIS: {model} rate limit hit! Marking cooldown.")
-                if model == "llama-3.3-70b-versatile":
-                    last_70b_rate_limit_time = now
-                elif model == "mixtral-8x7b-32768":
-                    last_mixtral_rate_limit_time = now
-            elif is_bad_request:
-                print(f"JARVIS: {model} bad request/validation error: {e}. Falling back.")
-            else:
-                print(f"JARVIS: {model} raised an unexpected error: {e}. Falling back.")
-                
-            if i == len(candidates) - 1:
-                raise e
+            completion = client.chat.completions.create(**params)
+            
+            with lock:
+                #save winning thread
+                if not success_event.is_set():
+                    results["winner"] = completion
+                    results["model"] = model_name
+                    print(f"{model_name} won")
+                    success_event.set()
+        except Exception as e:
+            with lock:
+                errors[model_name] = str(e)
+            print(f"{model_name} failed: {e}")
+            global last_70b_rate_limit_time
+            last_70b_rate_limit_time = time.time()
 
-tts_engine = None
-try:
-    tts_engine = pyttsx3.init()
-except Exception as e:
-    print(f"Warning: pyttsx3 text-to-speech initialization failed: {e}")
 
+        threads = []
+        for model_name in candidates:
+            thread = threading.Thread(target=query_single_model, args=(model_name,), daemon=True)
+            thread.start()
+            threads.append(thread)
+
+
+        for thread in threads:
+            thread.join(timeout=timeout+2.0)
+
+
+        if "winner" in results:
+            print(f"JARVIS: {results['winner']}")
+            return results["winner"]
+
+
+
+        raise Exception(f"All Parallel LLM Operations FAILED {errors}")
+
+        
+
+
+            
 
 
 def capture_selected_text():
