@@ -92,49 +92,56 @@ def set_clipboard(text):
         pass
 
 
-#step1 to control pc 
+CURRENT_CWD = os.path.expanduser("~")
 
-def execute_terminal_command(command):
-    import subprocess
+def execute_terminal_command(command: str) -> str:
+    global CURRENT_CWD
+    command = command.strip()
+    if not command:
+        return "Error: Empty command provided."
+
+    # Track directory changes dynamically
+    cd_match = re.search(r'(?:^|&&|;)\s*cd\s+([^&;]+)', command)
+    if cd_match:
+        target_dir = cd_match.group(1).strip()
+        resolved_path = os.path.abspath(os.path.expanduser(os.path.join(CURRENT_CWD, target_dir)))
+        if os.path.exists(resolved_path) and os.path.isdir(resolved_path):
+            CURRENT_CWD = resolved_path
+
+    # If command is strictly a directory change (e.g., "cd /path")
+    if command == "cd" or re.match(r'^cd\s+[^&;]+$', command):
+        return f"Working directory changed to: {CURRENT_CWD}"
+
     try:
-        # Use Popen so we don't automatically kill the process on timeout
-        process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        
-        try:
-            # Wait 15.0 seconds for search/web/python commands, and 1.8 seconds for others
-            timeout_val = 1.8
-            if any(x in command for x in ["curl", "wget", "python"]):
-                timeout_val = 15.0
-            output, error = process.communicate(timeout=timeout_val)
-        except subprocess.TimeoutExpired:
-            # If it's a CLI tool, terminate it and return a timeout error
-            if not command.strip().startswith("kitty") and any(x in command for x in ["curl", "wget", "python"]):
-                process.terminate()
-                try:
-                    process.wait(timeout=1.0)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                return f"Error: Command '{command}' timed out after {timeout_val} seconds."
-            else:
-                # Let GUI apps (like Kitty) keep running in the background!
-                return f"Command '{command}' launched successfully and is running in the background."
-            
-        output = output.strip()
-        error = error.strip()
+        process = subprocess.Popen(
+            command,
+            shell=True,
+            cwd=CURRENT_CWD,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
 
-        response = ""
-        if output:
-            response += f"Output:\n{output}\n"
-        if error:
-            response += f"Error:\n{error}\n"
-            
-        if not response:
-            return "Command executed successfully with no output."
-            
-        return response
-        
+        # Dynamic poll (1.5s): finishes fast for CLI outputs, remains running for GUI/background processes
+        try:
+            output, error = process.communicate(timeout=1.5)
+            output = output.strip() if output else ""
+            error = error.strip() if error else ""
+
+            response = []
+            if output:
+                response.append(f"Output:\n{output}")
+            if error:
+                response.append(f"Error:\n{error}")
+
+            return "\n".join(response) if response else "Command executed successfully with no output."
+
+        except subprocess.TimeoutExpired:
+            return f"Command '{command}' launched and running in background (PID: {process.pid})."
+
     except Exception as e:
-        return f"Failed to execute Python subprocess: {str(e)}"
+        return f"Failed to execute command: {str(e)}"
+
 
 def scan_directory(path):
     import os
@@ -809,9 +816,9 @@ def query_groq_background(query):
     CRITICAL RULE FOR JSON PARSING: When generating tool calls, DO NOT use escaped single quotes (`\\'`) inside the JSON string. It will crash the API's JSON parser. strictly output valid JSON.
     oh and I use chromium browser
     CRITICAL RULES FOR TERMINAL TOOL:
-    1. You do NOT have a persistent terminal. The 'cd' command does not work. You MUST use absolute paths (e.g., `ls -la /absolute/path`) to read directories. NEVER guess or hallucinate files!
-    2. FOR TERMINAL APPS (TUI): If you need to open an interactive terminal app that requires user input/viewing (like `nano`, `nvim`, or `htop`), you MUST launch it inside the Kitty terminal emulator (e.g., `kitty btop`). For normal CLI/background commands (like `ls`, `grep`, `cat`, `playerctl`, `curl`, etc.), NEVER prepend `kitty`; run them normally in the background.
-    3. NEVER use raw `sudo` or `pkexec` directly in the background as they will freeze or fail. If you MUST run a command requiring root privileges, launch it inside a new Kitty terminal window using sudo (e.g., `kitty sh -c "sudo <command>; read"`).
+    1. Working directory is statefully tracked at '{CURRENT_CWD}'. You CAN use `cd <path>` to navigate, run multiple/chained commands (e.g. `cd /path && ls -la`), pipe (`|`), or execute any Linux OS operation directly.
+    2. FOR TERMINAL APPS (TUI): If you need to open an interactive terminal app that requires user input/viewing (like `nano`, `nvim`, or `htop`), launch it inside Kitty terminal emulator (e.g., `kitty btop`). For normal CLI commands, run them normally without `kitty`.
+    3. NEVER use raw `sudo` or `pkexec` directly in background as they freeze. If root is needed, launch inside Kitty window using sudo (e.g., `kitty sh -c "sudo <command>; read"`).
     
     HISTORICAL LOGS:
     All past conversations and executed commands are logged at '{log_file}'.
